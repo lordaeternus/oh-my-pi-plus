@@ -35,6 +35,8 @@ class ToolBindings:
     issue: IssueInfo
     workspace: Workspace
     loop: asyncio.AbstractEventLoop
+    author_name: str
+    author_email: str
 
     @property
     def issue_key(self) -> str:
@@ -110,30 +112,67 @@ def _build_push_branch(bindings: ToolBindings) -> HostTool[Any, Any]:
                 f"refusing to push: branch={branch!r} does not match workspace branch "
                 f"{bindings.workspace.branch!r}."
             )
+        repo_dir = str(bindings.workspace.repo_dir)
+        # Re-pin the configured identity right before push (cheap; idempotent).
+        subprocess.run(
+            ["git", "config", "user.email", bindings.author_email],
+            cwd=repo_dir, check=False, capture_output=True, text=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", bindings.author_name],
+            cwd=repo_dir, check=False, capture_output=True, text=True,
+        )
         # Verify there's at least one commit on the branch.
         rev = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=str(bindings.workspace.repo_dir),
-            capture_output=True,
-            text=True,
-            check=False,
+            cwd=repo_dir, capture_output=True, text=True, check=False,
         )
         if rev.returncode != 0:
             _audit(bindings, "gh_push_branch", args, error=rev.stderr.strip())
             _raise_command(f"git rev-parse failed: {rev.stderr.strip()}")
+
+        # Identity gate: every commit between the base branch and HEAD must
+        # carry the configured author. Refuse to push otherwise so the agent
+        # fixes it (`git commit --amend --reset-author --no-edit`).
+        base = bindings.repo.default_branch
+        identities = subprocess.run(
+            ["git", "log", "--format=%H%x09%ae%x09%an", f"origin/{base}..HEAD"],
+            cwd=repo_dir, capture_output=True, text=True, check=False,
+        )
+        offending: list[str] = []
+        for line in (identities.stdout or "").strip().splitlines():
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            sha, email, name = parts[0], parts[1], parts[2]
+            if email != bindings.author_email or name != bindings.author_name:
+                offending.append(f"{sha[:12]} {name} <{email}>")
+        if offending:
+            details = "\n  ".join(offending)
+            msg = (
+                "refusing to push: commit author identity mismatch. "
+                f"Expected `{bindings.author_name} <{bindings.author_email}>`. "
+                f"Offending commits:\n  {details}\n"
+                "Amend each commit with `git commit --amend --reset-author --no-edit` "
+                "(or rebase with `git rebase -i origin/" + base + " --exec "
+                "'git commit --amend --reset-author --no-edit'`) and try again."
+            )
+            _audit(bindings, "gh_push_branch", args, error=msg)
+            _raise_command(msg)
+
         proc = subprocess.run(
             ["git", "push", "--set-upstream", "origin", branch],
-            cwd=str(bindings.workspace.repo_dir),
-            capture_output=True,
-            text=True,
-            check=False,
+            cwd=repo_dir, capture_output=True, text=True, check=False,
         )
         if proc.returncode != 0:
             err = (proc.stderr or proc.stdout).strip()
             _audit(bindings, "gh_push_branch", args, error=err)
             _raise_command(f"git push failed: {err}")
         _audit(bindings, "gh_push_branch", args, result={"head": rev.stdout.strip(), "branch": branch})
-        return f"pushed {branch} at {rev.stdout.strip()[:12]}"
+        return (
+            f"pushed {branch} at {rev.stdout.strip()[:12]} "
+            f"as {bindings.author_name} <{bindings.author_email}>"
+        )
 
     return host_tool(
         name="gh_push_branch",

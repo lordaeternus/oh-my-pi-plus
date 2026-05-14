@@ -72,6 +72,8 @@ def _bindings(db: Database, tmp_path: Path, transport: httpx.MockTransport) -> t
     bindings = ToolBindings(
         db=db, github=github, repo=_stub_repo(), issue=_stub_issue(),
         workspace=_stub_workspace(tmp_path), loop=loop,
+        author_name="robomp-bot",
+        author_email="robomp-bot@example.invalid",
     )
     db.upsert_issue(
         key=bindings.issue_key, repo="octo/widget", number=42, state="reproducing",
@@ -334,3 +336,76 @@ def test_set_issue_labels_rejects_empty(db: Database, tmp_path: Path) -> None:
             tool.execute({"labels": ["   ", ""]}, _ctx())
     finally:
         _stop_loop(loop, t)
+
+
+def test_gh_push_branch_rejects_wrong_identity(db: Database, tmp_path: Path) -> None:
+    """Pre-push gate refuses to push commits authored by anyone other than the configured identity."""
+    import os, subprocess
+
+    # Build a real local upstream + worktree so git operations actually work.
+    bare = tmp_path / "upstream.git"
+    bare.mkdir()
+    subprocess.run(["git", "init", "--bare", "--initial-branch=main", str(bare)], check=True, capture_output=True)
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    env = os.environ | {
+        "GIT_AUTHOR_NAME": "seed", "GIT_AUTHOR_EMAIL": "seed@x",
+        "GIT_COMMITTER_NAME": "seed", "GIT_COMMITTER_EMAIL": "seed@x",
+    }
+    subprocess.run(["git", "init", "--initial-branch=main", str(seed)], check=True, capture_output=True)
+    (seed / "README.md").write_text("init\n")
+    for cmd in (
+        ["git", "-C", str(seed), "add", "."],
+        ["git", "-C", str(seed), "-c", "user.email=seed@x", "-c", "user.name=seed", "commit", "-m", "init"],
+        ["git", "-C", str(seed), "remote", "add", "origin", str(bare)],
+        ["git", "-C", str(seed), "push", "origin", "main"],
+    ):
+        subprocess.run(cmd, check=True, capture_output=True, env=env)
+
+    from robomp.sandbox import SandboxManager
+    mgr = SandboxManager(tmp_path / "workspaces")
+    ws = mgr.ensure_workspace(
+        repo="octo/widget", number=42, title="identity test",
+        clone_url=str(bare), default_branch="main",
+        author_name="robomp-bot", author_email="robomp-bot@example.invalid",
+    )
+    # Commit with a different identity to provoke the gate.
+    bad_env = os.environ | {
+        "GIT_AUTHOR_NAME": "wrong", "GIT_AUTHOR_EMAIL": "wrong@nope",
+        "GIT_COMMITTER_NAME": "wrong", "GIT_COMMITTER_EMAIL": "wrong@nope",
+    }
+    (ws.repo_dir / "x.txt").write_text("hi\n")
+    subprocess.run(["git", "-C", str(ws.repo_dir), "add", "."], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(ws.repo_dir), "-c", "user.email=wrong@nope", "-c", "user.name=wrong",
+         "commit", "-m", "bad"],
+        check=True, capture_output=True, env=bad_env,
+    )
+
+    github = GitHubClient("tok", transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+    loop, thread = _make_loop_in_background()
+    try:
+        bindings = ToolBindings(
+            db=db, github=github, repo=_stub_repo(),
+            issue=IssueInfo(repo="octo/widget", number=42, title="t", body="", state="open",
+                            author="alice", labels=(), is_pull_request=False),
+            workspace=ws, loop=loop,
+            author_name="robomp-bot", author_email="robomp-bot@example.invalid",
+        )
+        db.upsert_issue(key=bindings.issue_key, repo="octo/widget", number=42, state="reproducing",
+                        branch=ws.branch, session_dir=str(ws.session_dir))
+        tool = next(x for x in build(bindings) if x.name == "gh_push_branch")
+        with pytest.raises(RpcCommandError) as exc:
+            tool.execute({}, _ctx())
+        msg = str(exc.value)
+        assert "identity mismatch" in msg
+        assert "wrong <wrong@nope>" in msg
+        assert "robomp-bot <robomp-bot@example.invalid>" in msg
+        # Branch must NOT have been pushed.
+        refs = subprocess.run(
+            ["git", "-C", str(bare), "for-each-ref", "--format=%(refname)"],
+            capture_output=True, text=True, check=True,
+        )
+        assert not any(r.startswith("refs/heads/farm/") for r in refs.stdout.splitlines()), refs.stdout
+    finally:
+        _stop_loop(loop, thread)

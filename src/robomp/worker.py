@@ -236,6 +236,8 @@ async def run_task(
         issue=inputs.issue,
         workspace=inputs.workspace,
         loop=loop,
+        author_name=inputs.settings.resolved_author_name,
+        author_email=inputs.settings.git_author_email,
     )
     prompt = _build_prompt(task_kind, inputs, comment=comment, pr_number=pr_number, review_payload=review_payload)
     return await asyncio.to_thread(

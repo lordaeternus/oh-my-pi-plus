@@ -239,6 +239,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         capped = max(1, min(int(limit), 2000))
         entries = tail_jsonl(cfg.log_dir / "robomp.log.jsonl", limit=capped)
         return {"entries": entries, "count": len(entries), "limit": capped}
+
     return app
 
 

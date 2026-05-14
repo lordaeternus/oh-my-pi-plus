@@ -16,6 +16,8 @@ def _baseline_env(tmp_path: Path) -> dict[str, str]:
         "GITHUB_TOKEN": "ghp_test_token_value_xxxxxxxxxxxxxxxx",
         "GITHUB_WEBHOOK_SECRET": "test-webhook-secret",
         "ROBOMP_BOT_LOGIN": "robomp-bot",
+        "ROBOMP_GIT_AUTHOR_NAME": "robomp-bot",
+        "ROBOMP_GIT_AUTHOR_EMAIL": "robomp-bot@example.invalid",
         "ROBOMP_REPO_ALLOWLIST": "octo/widget",
         "ROBOMP_MODEL": "anthropic/claude-sonnet-4-5",
         "ROBOMP_THINKING": "high",
