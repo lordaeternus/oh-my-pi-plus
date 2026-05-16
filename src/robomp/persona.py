@@ -140,6 +140,11 @@ def resume_triage(*, repo: RepoInfo, issue: IssueInfo, workspace: Workspace) -> 
     return render(_load("resume_triage.md"), {"repo": repo, "issue": issue, "workspace": workspace})
 
 
+def completion_reminder(*, repo: RepoInfo, issue: IssueInfo, workspace: Workspace) -> str:
+    """Reminder injected when a triage turn ends before a terminal tool fired."""
+    return render(_load("completion_reminder.md"), {"repo": repo, "issue": issue, "workspace": workspace})
+
+
 def _render_thread(messages: tuple) -> str:
     """Render a `tuple[ThreadMessage, ...]` as a markdown block for prompt embed.
 
@@ -340,6 +345,7 @@ __all__ = [
     "kickoff",
     "kickoff_directive",
     "render",
+    "completion_reminder",
     "resume_triage",
     "seed_phases",
     "system_append",

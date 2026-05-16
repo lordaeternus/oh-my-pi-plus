@@ -58,6 +58,13 @@ class _FakeRpcClient:
         return ()
 
     def prompt_and_wait(self, prompt, timeout):
+        if not hasattr(self, "prompts"):
+            self.prompts: list[str] = []
+        self.prompts.append(prompt)
+        hook = getattr(self, "on_prompt", None)
+        if hook is not None:
+            hook(self, prompt)
+
         class _Turn:
             messages: list = []
             events: list = []
@@ -104,7 +111,7 @@ def _make_inputs(
     repo = SimpleNamespace(full_name="acme/widgets", owner="acme", name="widgets")
     issue = SimpleNamespace(repo="acme/widgets", number=1, title="bug")
 
-    db = SimpleNamespace(set_event_model=lambda _did, _model: None)
+    db = SimpleNamespace(set_event_model=lambda _did, _model: None, get_issue=lambda _key: None)
     github = SimpleNamespace()
 
     inputs = worker.TaskInputs(
@@ -511,3 +518,132 @@ async def test_run_rpc_cancel_hook_stops_and_marks_closed(
 
     assert isinstance(fake.mark_closed_calls[0], RpcProcessExitError)
     assert "cancelled by operator" in str(fake.mark_closed_calls[0])
+
+
+class _ClassifiedRow:
+    """Stand-in for `db.IssueRow` carrying just `.classification`."""
+
+    def __init__(self, classification: str | None) -> None:
+        self.classification = classification
+
+
+def _make_inputs_with_classification(
+    tmp_path: Path,
+    settings: Settings,
+    *,
+    classification: str | None,
+) -> tuple[worker.TaskInputs, SimpleNamespace]:
+    inputs, bindings = _make_inputs(tmp_path, settings, session_has_jsonl=True)
+    row = _ClassifiedRow(classification) if classification else None
+    inputs.db.get_issue = lambda _key: row  # type: ignore[attr-defined]
+    bindings.db = inputs.db  # tools_called check uses inputs.db.get_issue
+    return inputs, bindings
+
+
+@pytest.mark.asyncio
+async def test_run_rpc_sends_reminder_when_pr_class_quits_early(tmp_path: Path, settings: Settings) -> None:
+    """`bug` classified turn that never calls a terminal tool gets a reminder."""
+    inputs, bindings = _make_inputs_with_classification(tmp_path, settings, classification="bug")
+    loop = asyncio.new_event_loop()
+    try:
+        worker._run_rpc_blocking(
+            inputs,
+            task_kind="triage_issue",
+            prompt="kickoff",
+            loop=loop,
+            bindings=bindings,  # type: ignore[arg-type]
+        )
+    finally:
+        loop.close()
+    fake = _FakeRpcClient.instances[0]
+    # kickoff + 2 reminders (default ROBOMP_TASK_COMPLETION_MAX_REMINDERS=2)
+    assert len(fake.prompts) == 1 + settings.task_completion_max_reminders
+    assert fake.prompts[0] == "kickoff"
+    assert all("terminal action" in p.lower() or "open the pr" in p.lower() for p in fake.prompts[1:])
+
+
+@pytest.mark.asyncio
+async def test_run_rpc_stops_reminding_after_terminal_tool(tmp_path: Path, settings: Settings) -> None:
+    """A reminder turn that fires `gh_open_pr` halts the loop."""
+    inputs, bindings = _make_inputs_with_classification(tmp_path, settings, classification="bug")
+
+    # First turn returns with no terminal tool; first reminder causes the
+    # agent to "call" gh_open_pr — simulated by mutating the worker's
+    # tools_called set via the on_prompt hook on the next prompt.
+    def _on_prompt(client: _FakeRpcClient, prompt: str) -> None:
+        if len(client.prompts) == 2:  # this is the first reminder
+            # Mimic a tool_end firing during the reminder turn by writing
+            # into the closure set the driver tracks. We can't reach it
+            # directly; instead trip the abort path? No — use the public
+            # contract: tool_end fires through on_tool_execution_end. The
+            # driver registers the callback before prompt_and_wait, so we
+            # replay it here.
+            for cb in client._tool_end_callbacks:
+                cb(SimpleNamespace(tool_name="gh_open_pr", result={}))
+
+    # Capture the registered tool_end callback on the fake.
+    original_on_tool_end = _FakeRpcClient.on_tool_execution_end
+
+    def _record_tool_end(self, cb) -> None:
+        self._tool_end_callbacks = getattr(self, "_tool_end_callbacks", [])
+        self._tool_end_callbacks.append(cb)
+
+    _FakeRpcClient.on_tool_execution_end = _record_tool_end  # type: ignore[assignment]
+    try:
+        _FakeRpcClient.on_prompt = staticmethod(_on_prompt)  # type: ignore[attr-defined]
+        loop = asyncio.new_event_loop()
+        try:
+            worker._run_rpc_blocking(
+                inputs,
+                task_kind="triage_issue",
+                prompt="kickoff",
+                loop=loop,
+                bindings=bindings,  # type: ignore[arg-type]
+            )
+        finally:
+            loop.close()
+    finally:
+        _FakeRpcClient.on_tool_execution_end = original_on_tool_end  # type: ignore[assignment]
+        delattr(_FakeRpcClient, "on_prompt")
+
+    fake = _FakeRpcClient.instances[0]
+    # kickoff + 1 reminder; second reminder NOT sent because gh_open_pr fired.
+    assert len(fake.prompts) == 2, fake.prompts
+
+
+@pytest.mark.asyncio
+async def test_run_rpc_skips_reminder_for_non_pr_classification(tmp_path: Path, settings: Settings) -> None:
+    """`question` classified turns are not enforced — no reminder."""
+    inputs, bindings = _make_inputs_with_classification(tmp_path, settings, classification="question")
+    loop = asyncio.new_event_loop()
+    try:
+        worker._run_rpc_blocking(
+            inputs,
+            task_kind="triage_issue",
+            prompt="kickoff",
+            loop=loop,
+            bindings=bindings,  # type: ignore[arg-type]
+        )
+    finally:
+        loop.close()
+    fake = _FakeRpcClient.instances[0]
+    assert len(fake.prompts) == 1
+
+
+@pytest.mark.asyncio
+async def test_run_rpc_skips_reminder_when_unclassified(tmp_path: Path, settings: Settings) -> None:
+    """No classification (agent quit before classify_issue) → no reminder."""
+    inputs, bindings = _make_inputs_with_classification(tmp_path, settings, classification=None)
+    loop = asyncio.new_event_loop()
+    try:
+        worker._run_rpc_blocking(
+            inputs,
+            task_kind="triage_issue",
+            prompt="kickoff",
+            loop=loop,
+            bindings=bindings,  # type: ignore[arg-type]
+        )
+    finally:
+        loop.close()
+    fake = _FakeRpcClient.instances[0]
+    assert len(fake.prompts) == 1

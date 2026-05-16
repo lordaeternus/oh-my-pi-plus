@@ -66,6 +66,13 @@ class Settings(BaseSettings):
     task_timeout_seconds: float = Field(2400.0, alias="ROBOMP_TASK_TIMEOUT_SECONDS")
     task_timeout_hard_grace_seconds: float = Field(60.0, alias="ROBOMP_TASK_TIMEOUT_HARD_GRACE_SECONDS")
     request_timeout_seconds: float = Field(120.0, alias="ROBOMP_REQUEST_TIMEOUT_SECONDS")
+    # Premature-end reminder. When a `triage_issue` turn ends without the
+    # agent having reached a terminal tool (`gh_open_pr`,
+    # `mark_unable_to_reproduce`, `abort_task`) for a `bug`/`documentation`
+    # classification, the driver sends up to this many "you stopped before
+    # opening a PR — continue" reminder prompts into the same omp session.
+    # Set to 0 to disable.
+    task_completion_max_reminders: int = Field(2, alias="ROBOMP_TASK_COMPLETION_MAX_REMINDERS")
     omp_command: str = Field("omp", alias="ROBOMP_OMP_COMMAND")
 
     # Graceful shutdown (Phase B). On SIGTERM the dispatcher stops claiming

@@ -16,6 +16,7 @@ import asyncio
 import logging
 import os
 import shutil
+import subprocess
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -207,7 +208,123 @@ def _prepare_xdg_dirs(workspace: Workspace, slot_uid: int | None) -> dict[str, s
                 path.chmod(0o770)
             except OSError as exc:
                 log.warning("Failed to make XDG directory accessible to slot user %s: %s", path, exc)
+    if should_chown:
+        assert slot_uid is not None
+        # `sandbox._chown_workspace` runs `chown -R 0:slot` on the entire
+        # workspace tree, which flips slot-created cache files under
+        # `.omp-xdg/` (e.g. bun's `.pile` install cache) from `slot:slot`
+        # to `root:slot`. The next bun install hits `PermissionDenied`
+        # because bun chmod/utime's its own cache files and needs owner.
+        # Restore slot ownership recursively so bun (and any other tool
+        # using XDG paths) can touch its own cache.
+        try:
+            subprocess.run(
+                ["chown", "-R", f"{slot_uid}:{slot_uid}", str(xdg_root)],
+                check=True,
+                capture_output=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as exc:
+            log.warning("Failed to recursively chown XDG root to slot %s: %s", slot_uid, exc)
     return {key: str(path) for key, path in homes.items()}
+
+
+_TERMINAL_TRIAGE_TOOLS: frozenset[str] = frozenset({"gh_open_pr", "mark_unable_to_reproduce", "abort_task"})
+_PR_REQUIRING_CLASSIFICATIONS: frozenset[str] = frozenset({"bug", "documentation"})
+
+
+def _needs_completion_reminder(
+    *,
+    task_kind: str,
+    inputs: TaskInputs,
+    bindings: ToolBindings,
+    tools_called: set[str],
+) -> bool:
+    """True iff a `triage_issue` turn ended before reaching a terminal tool.
+
+    Only enforced for `bug` / `documentation` classifications — `question`,
+    `enhancement`, `proposal`, `invalid`, `duplicate` terminate on a single
+    `gh_post_comment` which we can't reliably distinguish from a preamble.
+    """
+    if task_kind != "triage_issue":
+        return False
+    if bindings.abort is not None and bindings.abort.triggered:
+        return False
+    row = inputs.db.get_issue(bindings.issue_key)
+    if row is None or row.classification not in _PR_REQUIRING_CLASSIFICATIONS:
+        return False
+    return not (tools_called & _TERMINAL_TRIAGE_TOOLS)
+
+
+def _drive_turn(
+    client: RpcClient,
+    initial_prompt: str,
+    *,
+    task_kind: str,
+    inputs: TaskInputs,
+    bindings: ToolBindings,
+    tools_called: set[str],
+) -> Any:
+    """Run the initial prompt and, if the agent stopped early, send reminders.
+
+    Returns the final `Turn` (last `prompt_and_wait` result), or `None` when
+    the agent intentionally pulled the plug via `abort_task`.
+    """
+    settings = inputs.settings
+    max_reminders = settings.task_completion_max_reminders
+
+    def _run(prompt: str) -> Any:
+        try:
+            return client.prompt_and_wait(prompt, timeout=settings.task_timeout_seconds)
+        except (RpcError, RpcProcessExitError):
+            # Did the agent intentionally pull the plug via `abort_task`?
+            # If so, swallow — the abort path is a clean exit, not a
+            # failure that should surface in the dashboard or trigger
+            # a comment to the reporter. Anything else propagates.
+            if bindings.abort is not None and bindings.abort.triggered:
+                log.info(
+                    "rpc_aborted_by_tool",
+                    extra={"issue": bindings.issue_key, "task": task_kind, "reason": bindings.abort.reason},
+                )
+                return None
+            raise
+
+    turn = _run(initial_prompt)
+    if turn is None:
+        return None
+
+    reminders_used = 0
+    while reminders_used < max_reminders and _needs_completion_reminder(
+        task_kind=task_kind, inputs=inputs, bindings=bindings, tools_called=tools_called
+    ):
+        reminders_used += 1
+        log.warning(
+            "rpc_completion_reminder",
+            extra={
+                "issue": bindings.issue_key,
+                "task": task_kind,
+                "attempt": reminders_used,
+                "max": max_reminders,
+            },
+        )
+        reminder = persona.completion_reminder(repo=inputs.repo, issue=inputs.issue, workspace=inputs.workspace)
+        next_turn = _run(reminder)
+        if next_turn is None:
+            return None
+        turn = next_turn
+
+    if reminders_used and _needs_completion_reminder(
+        task_kind=task_kind, inputs=inputs, bindings=bindings, tools_called=tools_called
+    ):
+        log.warning(
+            "rpc_completion_unfinished",
+            extra={
+                "issue": bindings.issue_key,
+                "task": task_kind,
+                "reminders": reminders_used,
+                "tools_called": sorted(tools_called),
+            },
+        )
+    return turn
 
 
 def _has_prior_session(session_dir: Path) -> bool:
@@ -313,8 +430,12 @@ def _run_rpc_blocking(
     """Run a full RPC turn synchronously. Returns final assistant text (or None)."""
     settings = inputs.settings
 
+    tools_called: set[str] = set()
+
     def _on_tool_end(event: ToolExecutionEndEvent) -> None:
         tool_name = event.tool_name
+        if event.result is not None:
+            tools_called.add(tool_name)
         log.info(
             "tool_end",
             extra={
@@ -475,20 +596,16 @@ def _run_rpc_blocking(
             hard_timer.daemon = True
             hard_timer.start()
             try:
-                try:
-                    turn = client.prompt_and_wait(prompt, timeout=settings.task_timeout_seconds)
-                except (RpcError, RpcProcessExitError):
-                    # Did the agent intentionally pull the plug via `abort_task`?
-                    # If so, swallow — the abort path is a clean exit, not a
-                    # failure that should surface in the dashboard or trigger
-                    # a comment to the reporter. Anything else propagates.
-                    if bindings.abort is not None and bindings.abort.triggered:
-                        log.info(
-                            "rpc_aborted_by_tool",
-                            extra={"issue": bindings.issue_key, "task": task_kind, "reason": bindings.abort.reason},
-                        )
-                        return None
-                    raise
+                turn = _drive_turn(
+                    client,
+                    prompt,
+                    task_kind=task_kind,
+                    inputs=inputs,
+                    bindings=bindings,
+                    tools_called=tools_called,
+                )
+                if turn is None:
+                    return None
             finally:
                 hard_timer.cancel()
             if hard_timeout_fired.is_set():
