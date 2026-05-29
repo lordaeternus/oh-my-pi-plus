@@ -701,6 +701,29 @@ struct GrepConfig {
 	mode:           Option<GrepOutputMode>,
 }
 
+fn cached_entry_is_searchable_file(root: &Path, entry: &fs_cache::GlobMatch) -> bool {
+	if entry.file_type == fs_cache::FileType::File {
+		return true;
+	}
+	if entry.file_type != fs_cache::FileType::Symlink {
+		return false;
+	}
+	std::fs::metadata(root.join(&entry.path)).is_ok_and(|metadata| metadata.is_file())
+}
+
+fn walk_entry_is_searchable_file(entry: &ignore::DirEntry) -> bool {
+	let Some(file_type) = entry.file_type() else {
+		return false;
+	};
+	if file_type.is_file() {
+		return true;
+	}
+	if !file_type.is_symlink() {
+		return false;
+	}
+	std::fs::metadata(entry.path()).is_ok_and(|metadata| metadata.is_file())
+}
+
 fn collect_files(
 	root: &Path,
 	scanned_entries: &[fs_cache::GlobMatch],
@@ -709,7 +732,7 @@ fn collect_files(
 ) -> Vec<FileEntry> {
 	let mut entries = Vec::new();
 	for entry in scanned_entries {
-		if entry.file_type != fs_cache::FileType::File {
+		if !cached_entry_is_searchable_file(root, entry) {
 			continue;
 		}
 		if let Some(glob_set) = glob_set
@@ -918,7 +941,10 @@ fn build_regex_matcher(
 #[cfg(test)]
 mod tests {
 	#[cfg(unix)]
-	use std::{ffi::CString, os::unix::ffi::OsStrExt};
+	use std::{
+		ffi::CString,
+		os::unix::{ffi::OsStrExt, fs::symlink},
+	};
 	use std::{
 		fs,
 		path::{Path, PathBuf},
@@ -1055,6 +1081,25 @@ mod tests {
 		assert_eq!(result.files_searched, 1);
 		assert_eq!(result.matches.len(), 1);
 		assert_eq!(result.matches[0].path, "regular.txt");
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn grep_directory_searches_symlinked_file_targets() {
+		let root = TempDirGuard::new();
+		let target_root = TempDirGuard::new();
+		let target = target_root.path().join("target.txt");
+		write_file(&target, "needle through link\n");
+		symlink(&target, root.path().join("linked.txt")).expect("create symlinked file");
+
+		let result = grep_sync(base_grep_config(root.path()), None, task::CancelToken::default())
+			.expect("directory grep should search symlinked file targets");
+
+		assert_eq!(result.total_matches, 1);
+		assert_eq!(result.files_with_matches, 1);
+		assert_eq!(result.files_searched, 1);
+		assert_eq!(result.matches.len(), 1);
+		assert_eq!(result.matches[0].path, "linked.txt");
 	}
 
 	#[cfg(unix)]
@@ -1256,10 +1301,7 @@ impl ParallelVisitor for StreamingGrepVisitor<'_> {
 		let Ok(entry) = entry else {
 			return WalkState::Continue;
 		};
-		if !entry
-			.file_type()
-			.is_some_and(|file_type| file_type.is_file())
-		{
+		if !walk_entry_is_searchable_file(&entry) {
 			return WalkState::Continue;
 		}
 

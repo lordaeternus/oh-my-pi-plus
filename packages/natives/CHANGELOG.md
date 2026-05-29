@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed native `grep` directory scans skipping symlinked regular-file targets, which made the coding-agent `search` tool report `No matches found` for directories whose searchable files were surfaced as symlinks. ([#1518](https://github.com/can1357/oh-my-pi/issues/1518))
+
 ## [15.5.10] - 2026-05-28
 
 ### Fixed
