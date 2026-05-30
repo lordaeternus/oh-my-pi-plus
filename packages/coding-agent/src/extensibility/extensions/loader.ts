@@ -486,6 +486,7 @@ export async function discoverAndLoadExtensions(
 	cwd: string,
 	eventBus?: EventBus,
 	disabledExtensionIds: string[] = [],
+	agentDir?: string,
 ): Promise<LoadExtensionsResult> {
 	const allPaths: string[] = [];
 	const seen = new Set<string>();
@@ -509,7 +510,7 @@ export async function discoverAndLoadExtensions(
 	};
 
 	// 1. Discover extension modules via capability API (native .omp/.pi only)
-	const discovered = await loadCapability<ExtensionModule>(extensionModuleCapability.id, { cwd });
+	const discovered = await loadCapability<ExtensionModule>(extensionModuleCapability.id, { cwd, agentDir });
 	for (const ext of discovered.items) {
 		if (ext._source.provider !== "native") continue;
 		if (isDisabledName(ext.name)) continue;

@@ -114,7 +114,6 @@ export interface MCPLoadResult {
 	exaApiKeys: string[];
 }
 
-/** Options for discovering and connecting to MCP servers */
 export interface MCPDiscoverOptions {
 	/** Whether to load project-level config (default: true) */
 	enableProjectConfig?: boolean;
@@ -124,6 +123,8 @@ export interface MCPDiscoverOptions {
 	filterBrowser?: boolean;
 	/** Called when starting to connect to servers */
 	onConnecting?: (serverNames: string[]) => void;
+	/** Active agent directory propagated to MCP config loading. */
+	agentDir?: string;
 }
 
 /**
@@ -282,6 +283,7 @@ export class MCPManager {
 			enableProjectConfig: options?.enableProjectConfig,
 			filterExa: options?.filterExa,
 			filterBrowser: options?.filterBrowser,
+			agentDir: options?.agentDir,
 		});
 		const result = await this.connectServers(configs, sources, options?.onConnecting);
 		result.exaApiKeys = exaApiKeys;

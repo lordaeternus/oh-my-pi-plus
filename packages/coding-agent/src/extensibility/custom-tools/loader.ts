@@ -208,6 +208,7 @@ export async function discoverAndLoadCustomTools(
 		apply(reason: string): Promise<AgentToolResult<unknown>>;
 		reject?(reason: string): Promise<AgentToolResult<unknown> | undefined>;
 	}) => void,
+	agentDir?: string,
 ) {
 	const allPathsWithSources: ToolPathWithSource[] = [];
 	const seen = new Set<string>();
@@ -222,7 +223,7 @@ export async function discoverAndLoadCustomTools(
 	};
 
 	// 1. Discover tools via capability system (user + project from all providers)
-	const discoveredTools = await loadCapability<CustomTool>(toolCapability.id, { cwd });
+	const discoveredTools = await loadCapability<CustomTool>(toolCapability.id, { cwd, agentDir });
 	for (const tool of discoveredTools.items) {
 		addPath(tool.path, {
 			provider: tool._source.provider,

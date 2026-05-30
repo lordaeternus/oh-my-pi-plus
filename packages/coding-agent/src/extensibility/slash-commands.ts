@@ -153,6 +153,8 @@ function parseCommandTemplate(
 export interface LoadSlashCommandsOptions {
 	/** Working directory for project-local commands. Default: getProjectDir() */
 	cwd?: string;
+	/** Active agent directory propagated to {@link LoadOptions.agentDir}. */
+	agentDir?: string;
 }
 
 /**
@@ -160,7 +162,10 @@ export interface LoadSlashCommandsOptions {
  * Loads from all registered providers (builtin, user, project).
  */
 export async function loadSlashCommands(options: LoadSlashCommandsOptions = {}): Promise<FileSlashCommand[]> {
-	const result = await loadCapability<SlashCommand>(slashCommandCapability.id, { cwd: options.cwd });
+	const result = await loadCapability<SlashCommand>(slashCommandCapability.id, {
+		cwd: options.cwd,
+		agentDir: options.agentDir,
+	});
 
 	const fileCommands: FileSlashCommand[] = result.items.map(cmd => {
 		const { description, body } = parseCommandTemplate(cmd.content, {

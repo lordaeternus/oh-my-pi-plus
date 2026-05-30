@@ -461,12 +461,13 @@ export async function discoverExtensions(cwd?: string): Promise<LoadExtensionsRe
  */
 export async function discoverSkills(
 	cwd?: string,
-	_agentDir?: string,
+	agentDir?: string,
 	settings?: SkillsSettings,
 ): Promise<{ skills: Skill[]; warnings: SkillWarning[] }> {
 	return await loadSkillsInternal({
 		...settings,
 		cwd: cwd ?? getProjectDir(),
+		agentDir,
 	});
 }
 
@@ -476,10 +477,11 @@ export async function discoverSkills(
  */
 export async function discoverContextFiles(
 	cwd?: string,
-	_agentDir?: string,
+	agentDir?: string,
 ): Promise<Array<{ path: string; content: string; depth?: number }>> {
 	return await loadContextFilesInternal({
 		cwd: cwd ?? getProjectDir(),
+		agentDir,
 	});
 }
 
@@ -496,8 +498,8 @@ export async function discoverPromptTemplates(cwd?: string, agentDir?: string): 
 /**
  * Discover file-based slash commands from commands/ directories.
  */
-export async function discoverSlashCommands(cwd?: string): Promise<FileSlashCommand[]> {
-	return loadSlashCommandsInternal({ cwd: cwd ?? getProjectDir() });
+export async function discoverSlashCommands(cwd?: string, agentDir?: string): Promise<FileSlashCommand[]> {
+	return loadSlashCommandsInternal({ cwd: cwd ?? getProjectDir(), agentDir });
 }
 
 /**
@@ -879,7 +881,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	promptTemplatesPromise.catch(() => {});
 	const slashCommandsPromise = options.slashCommands
 		? Promise.resolve(options.slashCommands)
-		: logger.time("discoverSlashCommands", discoverSlashCommands, cwd);
+		: logger.time("discoverSlashCommands", discoverSlashCommands, cwd, agentDir);
 	slashCommandsPromise.catch(() => {});
 	const skillsSettings = settings.getGroup("skills");
 	const disabledExtensionIds = settings.get("disabledExtensions") ?? [];
@@ -1044,7 +1046,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		const rulesResult =
 			options.rules !== undefined
 				? { items: options.rules, warnings: undefined }
-				: await loadCapability<Rule>(ruleCapability.id, { cwd });
+				: await loadCapability<Rule>(ruleCapability.id, { cwd, agentDir });
 		const rulebookRules: Rule[] = [];
 		const alwaysApplyRules: Rule[] = [];
 		for (const rule of rulesResult.items) {
@@ -1288,6 +1290,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				filterBrowser: settings.get("browser.enabled") ?? false,
 				cacheStorage: settings.getStorage(),
 				authStorage,
+				agentDir,
 			});
 			mcpManager = mcpResult.manager;
 
@@ -1339,6 +1342,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			cwd,
 			builtInToolNames,
 			action => queueResolveHandler(toolSession, action),
+			agentDir,
 		);
 		for (const { path, error } of discoveredCustomTools.errors) {
 			logger.error("Custom tool load failed", { path, error });
@@ -1374,6 +1378,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				cwd,
 				eventBus,
 				disabledExtensionIds,
+				agentDir,
 			);
 			for (const { path, error } of extensionsResult.errors) {
 				logger.error("Failed to load extension", { path, error });

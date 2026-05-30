@@ -20,6 +20,8 @@ export interface LoadMCPConfigsOptions {
 	filterExa?: boolean;
 	/** Whether to filter out browser MCP servers when builtin browser tool is enabled (default: false) */
 	filterBrowser?: boolean;
+	/** Active agent directory propagated to {@link LoadOptions.agentDir}. */
+	agentDir?: string;
 }
 
 /** Result of loading MCP configs */
@@ -98,7 +100,7 @@ export async function loadAllMCPConfigs(cwd: string, options?: LoadMCPConfigsOpt
 	const filterBrowser = options?.filterBrowser ?? false;
 
 	// Load MCP servers via capability system
-	const result = await loadCapability<MCPServer>(mcpCapability.id, { cwd });
+	const result = await loadCapability<MCPServer>(mcpCapability.id, { cwd, agentDir: options?.agentDir });
 
 	// Filter out project-level configs if disabled
 	const servers = enableProjectConfig
