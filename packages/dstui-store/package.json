@@ -1,0 +1,58 @@
+{
+	"type": "module",
+	"name": "@oh-my-pi/pi-dstui-store",
+	"version": "15.7.2",
+	"description": "Filesystem-backed persistence for `@oh-my-pi/pi-dstui`: bounded module source + per-instance state with directory traversal and quota guards.",
+	"homepage": "https://omp.sh",
+	"author": "Can Boluk",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/can1357/oh-my-pi.git",
+		"directory": "packages/dstui-store"
+	},
+	"bugs": {
+		"url": "https://github.com/can1357/oh-my-pi/issues"
+	},
+	"keywords": [
+		"tui",
+		"dsl",
+		"lisp",
+		"persistence",
+		"storage"
+	],
+	"main": "./src/index.ts",
+	"types": "./src/index.ts",
+	"scripts": {
+		"check": "biome check . && bun run check:types",
+		"check:types": "tsgo -p tsconfig.json --noEmit",
+		"lint": "biome lint .",
+		"test": "bun test --parallel",
+		"fix": "biome check --write --unsafe .",
+		"fmt": "biome format --write ."
+	},
+	"dependencies": {
+		"@oh-my-pi/pi-dstui": "catalog:",
+		"@oh-my-pi/pi-utils": "catalog:"
+	},
+	"devDependencies": {
+		"@types/bun": "catalog:"
+	},
+	"engines": {
+		"bun": ">=1.3.14"
+	},
+	"files": [
+		"src"
+	],
+	"exports": {
+		".": {
+			"types": "./src/index.ts",
+			"import": "./src/index.ts"
+		},
+		"./*": {
+			"types": "./src/*.ts",
+			"import": "./src/*.ts"
+		},
+		"./*.js": "./src/*.ts"
+	}
+}
