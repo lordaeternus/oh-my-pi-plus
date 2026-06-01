@@ -1839,6 +1839,41 @@ describe("TUI terminal-state regressions", () => {
 			}
 		});
 
+		it("defers bare native Windows blank-pad shrink even when the probe is undefined", async () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+			try {
+				await withEnvPatch(
+					{ WT_SESSION: undefined, TMUX: undefined, STY: undefined, ZELLIJ: undefined },
+					async () => {
+						const term = new UnknownViewportTerminal(40, 10);
+						const tui = new TUI(term);
+						const component = new MutableLinesComponent([...rows("line-", 99), "prompt-row"]);
+						tui.addChild(component);
+
+						try {
+							tui.start();
+							await settle(term);
+							const writes = captureWrites(term);
+							component.setLines([...rows("short-", 19), "prompt-row"]);
+							tui.requestRender();
+							await settle(term);
+
+							const joined = writes.join("");
+							expect(joined).not.toContain(ERASE_SCROLLBACK);
+							// Padded deferredShrink renders blanks past the new tail; bare native
+							// Windows must not leak shrunk content into the live frame, preserving
+							// the conservative #1635 anti-yank guarantee until checkpoint cleanup.
+							expect(joined).not.toContain("short-");
+						} finally {
+							tui.stop();
+						}
+					},
+				);
+			} finally {
+				Object.defineProperty(process, "platform", { configurable: true, value: originalPlatform });
+			}
+		});
 		it("keeps a scrolled-up reader anchored while streaming inserts arrive on POSIX (unknown viewport)", async () => {
 			// POSIX terminals cannot report scrollback position, so isNativeViewportAtBottom()
 			// is undefined. Before the fix the planner optimistically treated "unknown" as

@@ -1323,12 +1323,20 @@ export class TUI extends Container {
 			const nativeViewportAtBottom = this.#readNativeViewportAtBottom();
 			const paddedViewportTop = Math.max(0, this.#previousLines.length - height);
 			const deferredShrinkHasVisibleRows = newLines.length > paddedViewportTop;
-			if (
-				deferredShrinkHasVisibleRows &&
-				this.#nativeViewportIsUnsafeForShrink(nativeViewportAtBottom, allowUnknownViewportMutation)
-			) {
-				this.#markNativeScrollbackDirty();
-				return { kind: "deferredShrink", paddedLength: this.#previousLines.length };
+			// Windows Terminal hosts native win32 apps behind ConPTY and intentionally
+			// suppresses the viewport probe under `WT_SESSION` (#1636). When the padded
+			// viewport for `deferredShrink` would render every row blank, fall through
+			// to the visible-tail repaint below instead of deferring to a blank screen.
+			// Bare native Windows keeps the unknown-as-scrolled defer — its probe is
+			// trusted; an `undefined` answer means the FFI failed, and the conservative
+			// anti-yank guard from #1635 still applies.
+			const wtSuppressedUnknown =
+				nativeViewportAtBottom === undefined && process.platform === "win32" && Boolean(Bun.env.WT_SESSION);
+			if (this.#nativeViewportIsUnsafeForShrink(nativeViewportAtBottom, allowUnknownViewportMutation)) {
+				if (!wtSuppressedUnknown || deferredShrinkHasVisibleRows) {
+					this.#markNativeScrollbackDirty();
+					return { kind: "deferredShrink", paddedLength: this.#previousLines.length };
+				}
 			}
 			// A width change rewraps the whole transcript, so committed scrollback is
 			// mis-wrapped at the old width. Yank is acceptable on an explicit resize, so
@@ -1367,20 +1375,17 @@ export class TUI extends Container {
 			// hiding the prompt until the next checkpoint. This can happen even when
 			// `scrollbackHighWater` is far below `previousLines.length - height`, because
 			// prior unknown-POSIX viewport repaints commit longer logical frames without
-			// moving the native scrollback boundary. For a shrink that large a blank,
-			// uninteractable viewport is the greater evil. On POSIX, yank with
-			// `historyRebuild`; on native Windows, where an unreportable viewport was
-			// historically treated as unsafe, repaint the visible tail without clearing
-			// scrollback so a bottom-anchored reader does not lose the prompt.
-			// Unknown win32 shrink probes that can carry real content defer above and
-			// never reach this; the POSIX yank only lands on non-win32 hosts whose probe
-			// is genuinely unavailable.
+			// moving the native scrollback boundary. For a shrink that large the only
+			// path to a usable viewport runs through bytes the terminal will actually
+			// keep on screen. On POSIX we yank with `historyRebuild`; under Windows
+			// Terminal where the ConPTY probe is suppressed (`wtSuppressedUnknown`) we
+			// repaint the visible tail in place so a bottom-anchored reader does not
+			// lose the prompt. The only Windows path that reaches this branch is
+			// `wtSuppressedUnknown` — every other unknown win32 shrink (bare or with
+			// visible padded rows) already deferred above, and known viewport positions
+			// were either deferred (false) or rebuilt live (true).
 			if (newLines.length <= paddedViewportTop) {
-				if (nativeViewportAtBottom === false) {
-					this.#markNativeScrollbackDirty();
-					return { kind: "deferredMutation" };
-				}
-				if (nativeViewportAtBottom === undefined && process.platform === "win32") {
+				if (wtSuppressedUnknown) {
 					this.#markNativeScrollbackDirty();
 					return { kind: "viewportRepaint" };
 				}
