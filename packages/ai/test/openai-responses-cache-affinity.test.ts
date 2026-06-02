@@ -144,7 +144,6 @@ describe("openai-responses cache affinity", () => {
 		const captured = await captureOpenAIResponseHeaders({
 			sessionId: "session-123",
 			cacheOptimizer: {
-				enabled: true,
 				blockSize: 8,
 				paddingText: ".",
 				countTokens: countCacheOptimizerCharacters,
@@ -163,7 +162,6 @@ describe("openai-responses cache affinity", () => {
 		const captured = await captureOpenAIResponseHeaders({
 			extraBody: { prompt_cache_key: "adapter-cache-key" },
 			cacheOptimizer: {
-				enabled: true,
 				blockSize: 8,
 				paddingText: ".",
 				countTokens: countCacheOptimizerCharacters,

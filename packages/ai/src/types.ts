@@ -303,7 +303,7 @@ export interface StreamOptions {
 	 */
 	onAuthError?: (provider: string, apiKey: string, error: unknown) => Promise<string | undefined>;
 	cacheRetention?: CacheRetention;
-	/** Opt-in prefix-cache block alignment. Requires a provider/model token counter. */
+	/** Per-request prefix-cache alignment setting. Providing a token counter enables it by default. */
 	cacheOptimizer?: CacheOptimizerOptions;
 	/**
 	 * Additional headers to include in provider requests.

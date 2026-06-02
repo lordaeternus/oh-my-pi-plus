@@ -166,7 +166,6 @@ describe("Anthropic request fingerprint alignment", () => {
 			{
 				isOAuth: false,
 				cacheOptimizer: {
-					enabled: true,
 					blockSize: 8,
 					paddingText: ".",
 					countTokens: countCacheOptimizerCharacters,
@@ -203,7 +202,6 @@ describe("Anthropic request fingerprint alignment", () => {
 
 		optimizeAnthropicCacheAlignment(params, ANTHROPIC_MODEL, {
 			cacheOptimizer: {
-				enabled: true,
 				blockSize: 64,
 				paddingText: ".",
 				countTokens: segments => {

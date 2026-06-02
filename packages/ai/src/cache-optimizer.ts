@@ -23,13 +23,13 @@ export interface CachePrefixSegment {
 /** Counts provider tokens for the complete prefix represented by ordered segments. */
 export type CacheTokenCounter = (segments: readonly CachePrefixSegment[], model: Model<Api>) => number;
 
-/** Opt-in provider prefix-cache alignment controls. */
+/** Prefix-cache alignment controls. Providing a token counter enables alignment unless `enabled` is false. */
 export interface CacheOptimizerOptions {
-	/** Enables block-boundary padding when a token counter is supplied. */
+	/** Disable block-boundary padding while preserving the rest of the option object. Default: true. */
 	readonly enabled?: boolean;
 	/** Provider/model tokenizer callback for the cumulative prefix being aligned. */
 	readonly countTokens?: CacheTokenCounter;
-	/** Override provider block size; defaults to Anthropic 128 or OpenAI Responses 64. */
+	/** Override provider block size; defaults to 128-token Anthropic and OpenAI Responses cache increments. */
 	readonly blockSize?: number;
 	/** Semantically inert text appended to the block being aligned. Defaults to a newline. */
 	readonly paddingText?: string;
@@ -55,7 +55,7 @@ function buildCacheOptimizerPlan(
 	options: CacheOptimizerOptions | undefined,
 	defaultBlockSize: number | undefined,
 ): CacheOptimizerPlan | undefined {
-	if (!options?.enabled || !options.countTokens) return undefined;
+	if (options?.enabled === false || !options?.countTokens) return undefined;
 	const resolvedBlockSize = options.blockSize ?? defaultBlockSize;
 	if (resolvedBlockSize === undefined || !Number.isSafeInteger(resolvedBlockSize) || resolvedBlockSize <= 1) {
 		return undefined;

@@ -27,10 +27,23 @@ describe("CacheOptimizer", () => {
 			model,
 			segments,
 			segmentIndex: 0,
-			options: { enabled: true, blockSize: 8, paddingText: ".", countTokens: countCharacters },
+			options: { blockSize: 8, paddingText: ".", countTokens: countCharacters },
 		});
 
 		expect(padding).toBe("..");
+	});
+
+	it("does not pad when explicitly disabled", () => {
+		const segments: CachePrefixSegment[] = [{ kind: "system", text: "stable" }];
+
+		const padding = buildCacheAlignmentPadding({
+			model,
+			segments,
+			segmentIndex: 0,
+			options: { enabled: false, blockSize: 8, paddingText: ".", countTokens: countCharacters },
+		});
+
+		expect(padding).toBe("");
 	});
 
 	it("does not pad without an explicit tokenizer", () => {

@@ -1966,7 +1966,7 @@ export function optimizeAnthropicCacheAlignment(
 	options?: AnthropicOptions,
 ): void {
 	const cacheOptimizer = options?.cacheOptimizer;
-	if (!cacheOptimizer?.enabled) return;
+	if (!cacheOptimizer || cacheOptimizer.enabled === false) return;
 	const segments: CachePrefixSegment[] = [];
 
 	if (params.tools) {

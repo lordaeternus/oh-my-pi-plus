@@ -119,7 +119,7 @@ function optimizeOpenAIResponsesCacheAlignment(
 ): string | undefined {
 	const cacheOptimizer = options?.cacheOptimizer;
 	const effectiveCacheKey = promptCacheKey ?? resolveOpenAIResponsesExtraBodyCacheKey(options);
-	if (!cacheOptimizer?.enabled || !effectiveCacheKey) return systemInstructions;
+	if (!cacheOptimizer || cacheOptimizer.enabled === false || !effectiveCacheKey) return systemInstructions;
 	const segments: CachePrefixSegment[] = [];
 	if (systemInstructions) {
 		const segmentIndex = segments.length;
