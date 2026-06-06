@@ -352,6 +352,7 @@ export class ExtensionRunner {
 		"ctrl+p": true,
 		"ctrl+l": true,
 		"ctrl+o": true,
+		"ctrl+0": true,
 		"ctrl+t": true,
 		"ctrl+g": true,
 		"shift+tab": true,

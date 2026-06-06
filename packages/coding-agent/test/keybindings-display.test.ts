@@ -18,6 +18,13 @@ describe("KeybindingsManager.getDisplayString", () => {
 		expect(keybindings.getDisplayString("app.clipboard.copyPrompt")).toBe("Alt+Shift+C/Ctrl+Shift+C");
 	});
 
+	it("registers Ctrl+0 as a default expand alias", () => {
+		const keybindings = KeybindingsManager.inMemory();
+
+		expect(keybindings.getKeys("app.tools.expand")).toEqual(["ctrl+o", "ctrl+0"]);
+		expect(keybindings.getDisplayString("app.tools.expand")).toBe("Ctrl+O/Ctrl+0");
+	});
+
 	it("returns an empty string when the action has no binding", () => {
 		const keybindings = KeybindingsManager.inMemory({
 			"app.clipboard.copyPrompt": [],

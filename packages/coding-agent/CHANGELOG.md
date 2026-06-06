@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+
+- Fixed the expand shortcut so `Ctrl+0` also toggles collapsed tool/code previews, matching users who read or type the hint as zero instead of letter O. ([#1964](https://github.com/can1357/oh-my-pi/issues/1964))
 
 ## [15.9.5] - 2026-06-05
 ### Added

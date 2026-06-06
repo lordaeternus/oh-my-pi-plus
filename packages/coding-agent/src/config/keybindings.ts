@@ -111,7 +111,7 @@ export const KEYBINDINGS = {
 		description: "Select temporary model for current session",
 	},
 	"app.tools.expand": {
-		defaultKeys: "ctrl+o",
+		defaultKeys: ["ctrl+o", "ctrl+0"],
 		description: "Expand tools",
 	},
 	"app.editor.external": {

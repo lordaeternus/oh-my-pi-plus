@@ -35,7 +35,7 @@ const DEFAULT_ACTION_KEYS: Record<ConfigurableEditorAction, KeyId[]> = {
 	"app.model.cycleBackward": ["shift+ctrl+p"],
 	"app.model.select": ["ctrl+l"],
 	"app.model.selectTemporary": ["alt+p"],
-	"app.tools.expand": ["ctrl+o"],
+	"app.tools.expand": ["ctrl+o", "ctrl+0"],
 	"app.thinking.toggle": ["ctrl+t"],
 	"app.editor.external": ["ctrl+g"],
 	"app.history.search": ["ctrl+r"],
