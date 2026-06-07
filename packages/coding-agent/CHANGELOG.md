@@ -50,6 +50,8 @@
 
 ### Fixed
 
+- Fixed MCP tools hanging in `write` approval mode by preserving custom-tool approval tiers and classifying MCP bridge tools as workspace-write operations ([#2062](https://github.com/can1357/oh-my-pi/issues/2062)).
+
 - Fixed inline `find` and `search` result blocks to align with grouped `read` output and render their success headers with the normal tool-title color instead of accent blue.
 
 - Fixed the working-status shimmer to opt into the loader's 30fps animated-message repaint path while keeping both the status spinner and pending bash/eval tool spinners on their normal 80 ms glyph cadence.

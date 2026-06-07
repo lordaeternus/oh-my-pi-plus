@@ -2,6 +2,12 @@ import { describe, expect, it } from "bun:test";
 import type { AgentTool, ToolApproval } from "@oh-my-pi/pi-agent-core";
 import { LSP_READONLY_ACTIONS } from "@oh-my-pi/pi-coding-agent/lsp";
 import {
+	DeferredMCPTool,
+	type MCPServerConnection,
+	MCPTool,
+	type MCPToolDefinition,
+} from "@oh-my-pi/pi-coding-agent/mcp";
+import {
 	type ApprovalMode,
 	formatApprovalPrompt,
 	requiresApproval,
@@ -47,6 +53,26 @@ function bashApproval(command: string) {
 	if (typeof approval !== "function") throw new Error("Bash approval must be dynamic");
 	return approval({ command });
 }
+
+const mcpToolDefinition: MCPToolDefinition = {
+	name: "safe_search",
+	inputSchema: { type: "object" },
+};
+
+const mcpConnection: MCPServerConnection = {
+	name: "searchMCP-LAN",
+	config: { type: "stdio", command: "search-mcp-lan" },
+	transport: {
+		connected: true,
+		async request() {
+			throw new Error("MCP transport request should not be called");
+		},
+		async notify() {},
+		async close() {},
+	},
+	serverInfo: { name: "search-mcp-lan", version: "1.0.0" },
+	capabilities: {},
+};
 
 describe("resolveApproval tier matrix", () => {
 	const cases: Array<[ApprovalMode, "read" | "write" | "exec", "allow" | "prompt"]> = [
@@ -109,7 +135,18 @@ describe("resolveApproval override and user policy", () => {
 });
 
 describe("MCP fallback and prompt formatting", () => {
-	it("treats MCP tools without approval declarations as exec tier", () => {
+	it("classifies MCP bridge tools as write tier", () => {
+		const connected = new MCPTool(mcpConnection, mcpToolDefinition);
+		const deferred = new DeferredMCPTool("searchMCP-LAN", mcpToolDefinition, async () => mcpConnection);
+
+		for (const subject of [connected, deferred]) {
+			expect(resolveApproval(subject, {}, "always-ask")).toMatchObject({ policy: "prompt", tier: "write" });
+			expect(resolveApproval(subject, {}, "write")).toMatchObject({ policy: "allow", tier: "write" });
+			expect(requiresApproval(subject, {}, "write").required).toBe(false);
+		}
+	});
+
+	it("treats unannotated MCP-shaped tools as exec tier", () => {
 		const subject = tool("mcp__server__dangerous");
 		expect(resolveApproval(subject, {}, "write")).toMatchObject({ policy: "prompt", tier: "exec" });
 		expect(resolveApproval(subject, {}, "yolo")).toMatchObject({ policy: "allow", tier: "exec" });

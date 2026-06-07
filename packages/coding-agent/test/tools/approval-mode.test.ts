@@ -5,15 +5,30 @@ import * as path from "node:path";
 import type { AgentToolContext } from "@oh-my-pi/pi-agent-core";
 import { getBundledModel } from "@oh-my-pi/pi-ai";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+import type { CustomTool } from "@oh-my-pi/pi-coding-agent/extensibility/custom-tools/types";
 import { createAgentSession } from "@oh-my-pi/pi-coding-agent/sdk";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { Snowflake } from "@oh-my-pi/pi-utils";
+import * as z from "zod/v4";
 
 const BASE_SETTINGS = {
 	"async.enabled": false,
 	"bash.autoBackground.enabled": false,
 	"bashInterceptor.enabled": false,
 } as const;
+
+const CUSTOM_WRITE_TOOL_NAME = "custom_write_tool";
+
+const customWriteTool = {
+	name: CUSTOM_WRITE_TOOL_NAME,
+	label: "Custom Write Tool",
+	description: "Exercises custom tool approval propagation",
+	parameters: z.object({}),
+	approval: "write",
+	async execute() {
+		return { content: [{ type: "text", text: "custom write ok" }] };
+	},
+} satisfies CustomTool;
 
 function emptyWorkspaceTree(cwd: string) {
 	return { rootPath: cwd, rendered: ".\n", truncated: false, totalLines: 1, agentsMdFiles: [] };
@@ -55,7 +70,8 @@ describe("tools.approvalMode setting", () => {
 			slashCommands: [],
 			enableMCP: false,
 			enableLsp: false,
-			toolNames: ["bash"],
+			toolNames: ["bash", CUSTOM_WRITE_TOOL_NAME],
+			customTools: [customWriteTool],
 		});
 		session = created.session;
 	});
@@ -136,6 +152,20 @@ describe("tools.approvalMode setting", () => {
 				settings,
 			} as AgentToolContext),
 		).rejects.toThrow(/requires approval but no interactive UI available/);
+	});
+
+	it("write mode allows custom tools that declare write approval", async () => {
+		const settings = approvalSettings({
+			"tools.approvalMode": "write",
+			"tools.approval": {},
+		});
+		const customTool = session.getToolByName(CUSTOM_WRITE_TOOL_NAME);
+		if (!customTool) throw new Error("Expected custom write tool");
+
+		const result = await customTool.execute("custom-write-mode", {}, undefined, undefined, {
+			settings,
+		} as AgentToolContext);
+		expect(textOf(result)).toContain("custom write ok");
 	});
 
 	it("critical bash patterns do not prompt in yolo mode with bash allowed", async () => {
