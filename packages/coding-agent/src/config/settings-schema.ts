@@ -1804,6 +1804,16 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
+	"edit.modelVariants": {
+		type: "record",
+		default: EMPTY_STRING_RECORD,
+		ui: {
+			tab: "editing",
+			label: "Model Edit Variants",
+			description: "Map model name substrings to edit tool variants (replace, patch, hashline, or apply_patch)",
+		},
+	},
+
 	"edit.fuzzyMatch": {
 		type: "boolean",
 		default: true,

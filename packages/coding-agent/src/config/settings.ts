@@ -482,8 +482,7 @@ export class Settings {
 	 */
 	getEditVariantForModel(model: string | undefined): EditMode | null {
 		if (!model) return null;
-		const variants = (this.#merged.edit as { modelVariants?: Record<string, string> })?.modelVariants;
-		if (!variants) return null;
+		const variants = shallowStringRecord(this.get("edit.modelVariants"));
 		for (const pattern in variants) {
 			if (model.includes(pattern)) {
 				const value = normalizeEditMode(variants[pattern]);

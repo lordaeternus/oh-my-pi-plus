@@ -13,6 +13,21 @@ const EDIT_MODE_IDS = {
 
 export const EDIT_MODES = Object.keys(EDIT_MODE_IDS) as EditMode[];
 
+type DefaultModelEditVariant = {
+	pattern: string;
+	mode: EditMode;
+};
+
+const DEFAULT_MODEL_EDIT_VARIANTS: readonly DefaultModelEditVariant[] = [{ pattern: "glm-5.1", mode: "replace" }];
+
+function getDefaultEditVariantForModel(model: string | undefined): EditMode | null {
+	if (!model) return null;
+	for (const variant of DEFAULT_MODEL_EDIT_VARIANTS) {
+		if (model.includes(variant.pattern)) return variant.mode;
+	}
+	return null;
+}
+
 export function normalizeEditMode(mode?: string | null): EditMode | undefined {
 	if (!mode) return undefined;
 	return EDIT_MODE_IDS[mode as keyof typeof EDIT_MODE_IDS];
@@ -20,6 +35,7 @@ export function normalizeEditMode(mode?: string | null): EditMode | undefined {
 
 export interface EditModeSettingsLike {
 	get(key: "edit.mode"): unknown;
+	isConfigured?(key: "edit.mode"): boolean;
 	getEditVariantForModel?(model: string | undefined): EditMode | null;
 }
 
@@ -37,5 +53,10 @@ export function resolveEditMode(session: EditModeSessionLike): EditMode {
 	if (envMode) return envMode;
 
 	const settingsMode = normalizeEditMode(String(session.settings.get("edit.mode") ?? ""));
+	if (settingsMode && session.settings.isConfigured?.("edit.mode")) return settingsMode;
+
+	const defaultModelVariant = getDefaultEditVariantForModel(activeModel);
+	if (defaultModelVariant) return defaultModelVariant;
+
 	return settingsMode ?? DEFAULT_EDIT_MODE;
 }
