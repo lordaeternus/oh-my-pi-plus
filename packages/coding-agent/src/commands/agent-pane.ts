@@ -1,3 +1,4 @@
+import type { ReadableStreamDefaultReader as NodeReadableStreamDefaultReader } from "node:stream/web";
 import {
 	type Component,
 	Editor,
@@ -199,6 +200,7 @@ export class AgentPaneClient {
 	#reconcileQueue: Promise<void> = Promise.resolve();
 	#exitTimer: NodeJS.Timeout | undefined;
 	#parentLossTimer: NodeJS.Timeout | undefined;
+	#streamReader: NodeReadableStreamDefaultReader | undefined;
 
 	constructor(permission: ChildPermissionSet, options: AgentPaneClientOptions = {}) {
 		this.permission = permission;
@@ -316,6 +318,7 @@ export class AgentPaneClient {
 					throw new AgentPaneProtocolError("Sidecar stream has an invalid content type.");
 				}
 				const reader = response.body.getReader();
+				this.#streamReader = reader;
 				try {
 					await this.#reconcile(true, false);
 					disconnectedAt = undefined;
@@ -330,6 +333,7 @@ export class AgentPaneClient {
 						}
 					}
 				} finally {
+					if (this.#streamReader === reader) this.#streamReader = undefined;
 					try {
 						await reader.cancel();
 					} catch {}
@@ -377,7 +381,10 @@ export class AgentPaneClient {
 				if (error instanceof AgentPaneProtocolError) this.#permanent("protocol_error");
 				else if (error instanceof AgentPaneResponseError && (error.status === 401 || error.status === 410)) {
 					this.#permanent(error.status === 401 ? "revoked" : "generation_closed");
-				} else this.#emit("reconnecting", "Connection lost; transcript frozen while reconnecting.");
+				} else {
+					this.#emit("reconnecting", "Connection lost; transcript frozen while reconnecting.");
+					this.#restartStream();
+				}
 			});
 	}
 
@@ -496,6 +503,19 @@ export class AgentPaneClient {
 		this.#notice = `Command ${sanitizeDisplay(commandId)} may have been accepted; it will not be retried.`;
 		this.#abort.abort();
 		this.#publish();
+	}
+
+	/**
+	 * Cancel the open SSE reader so the stream loop drops to its reconnect path
+	 * and reissues `/v1/stream` + reconcile with backoff. Used when an inline
+	 * invalidation reconcile fails transiently while the reader is still parked
+	 * on `read()` waiting for the next event.
+	 */
+	#restartStream(): void {
+		const reader = this.#streamReader;
+		if (!reader) return;
+		this.#streamReader = undefined;
+		void reader.cancel().catch(() => {});
 	}
 
 	#permanent(

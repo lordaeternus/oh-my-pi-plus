@@ -32,6 +32,7 @@
 - Fixed snapcompact `toolResults` imaging confusing models into reporting tool malfunctions: the note prepended to rasterized tool results now tells the model the result is in the PNG frame(s) below and that the image delivery is deliberate, not a tool error, instead of the bare `[Rasterized]` marker
 - Fixed Kitty subagent panes treating typed pre-dispatch send rejections as unknown outcomes; rejected sends now keep the pane connected and restore the draft for retry ([#2347](https://github.com/can1357/oh-my-pi/issues/2347)).
 - Fixed Kitty subagent pane transcript paging so one oversized complete JSONL entry is skipped instead of stalling the byte cursor and hiding later transcript/send feedback.
+- Fixed Kitty subagent panes getting stuck in `reconnecting` when an inline SSE invalidation reconcile hit a transient `/v1/snapshot` or `/v1/transcript` failure: the open stream reader is now canceled so the loop reissues `/v1/stream` and reconciles with backoff instead of parking on `read()` until `parent_lost`.
 
 ## [15.11.4] - 2026-06-12
 

@@ -230,6 +230,66 @@ describe("pane protocol and client", () => {
 		second.close();
 	});
 
+	it("restarts the SSE stream when an inline invalidation reconcile fails transiently", async () => {
+		const events: string[] = [];
+		let streams = 0;
+		let snapshots = 0;
+		const firstReady = Promise.withResolvers<ReadableStreamDefaultController<Uint8Array>>();
+		const secondRequested = Promise.withResolvers<void>();
+		const second = eventStream();
+		const firstBody = new ReadableStream<Uint8Array>({
+			start: controller => firstReady.resolve(controller),
+			cancel: () => {
+				events.push("first canceled");
+			},
+		});
+		const client = new AgentPaneClient(permission, {
+			reconnectDelayMs: 0,
+			fetch: fixtureFetch(url => {
+				if (url.pathname === "/v1/snapshot") {
+					snapshots += 1;
+					// Bootstrap + first stream reconcile succeed; the invalidation reconcile is the third call.
+					return snapshots === 3 ? json({ error: "temporarily_unavailable" }, 503) : json(snapshot);
+				}
+				if (url.pathname === "/v1/transcript")
+					return json({
+						version: 1,
+						generation: permission.generation,
+						childId: permission.childId,
+						fromByte: 0,
+						nextByte: 0,
+						reset: false,
+						entries: [],
+					});
+				if (url.pathname === "/v1/stream") {
+					streams += 1;
+					if (streams === 1) return new Response(firstBody, { headers: { "Content-Type": "text/event-stream" } });
+					events.push("second requested");
+					secondRequested.resolve();
+					return second.response;
+				}
+				return json({ error: "not_found" }, 404);
+			}),
+		});
+
+		await client.start();
+		const controller = await firstReady.promise;
+		controller.enqueue(
+			new TextEncoder().encode(
+				`event: invalidation\ndata: ${JSON.stringify({
+					version: 1,
+					generation: permission.generation,
+					childId: permission.childId,
+					kind: "state",
+				})}\n\n`,
+			),
+		);
+		await secondRequested.promise;
+		expect(events).toEqual(["first canceled", "second requested"]);
+		client.close();
+		second.close();
+	});
+
 	it("uses one generation-scoped command id and never retries an ambiguous mutation", async () => {
 		let sends = 0;
 		let commandId = "";
