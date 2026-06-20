@@ -78,6 +78,7 @@ function createStubInputControllerContext(opts: { skillCommands: Map<string, str
 			return (this as typeof ctx).session;
 		},
 		showError,
+		flushPendingBashComponents: vi.fn(),
 		handleGoalModeCommand,
 		goalModeEnabled: false,
 		updatePendingMessagesDisplay,
@@ -110,6 +111,8 @@ describe("InputController skill queue chip metadata", () => {
 		tempDir = TempDir.createSync("@pi-skill-queue-stub-");
 		const skillPath = await writeSkillFile(tempDir.path(), "test-skill", "Do the thing.");
 		skillCommands = new Map<string, string>([["skill:test-skill", skillPath]]);
+		const secondSkillPath = await writeSkillFile(tempDir.path(), "other-skill", "Do the other thing.");
+		skillCommands.set("skill:other-skill", secondSkillPath);
 	});
 
 	afterEach(() => {
@@ -131,6 +134,7 @@ describe("InputController skill queue chip metadata", () => {
 			streamingBehavior: "steer",
 			queueChipText: "/skill:test-skill arg1 arg2",
 		});
+		expect(promptCustomMessage.mock.calls[0]?.[0].details.args).toBe("arg1 arg2");
 		expect(promptCustomMessage.mock.calls[0]?.[0].details.__queueChipText).toBeUndefined();
 		expect(updatePendingMessagesDisplay).toHaveBeenCalledTimes(1);
 		expect(requestRender).toHaveBeenCalledTimes(1);
@@ -150,6 +154,7 @@ describe("InputController skill queue chip metadata", () => {
 			streamingBehavior: "followUp",
 			queueChipText: "/skill:test-skill arg1 arg2",
 		});
+		expect(promptCustomMessage.mock.calls[0]?.[0].details.args).toBe("arg1 arg2");
 	});
 
 	it("streaming follow-up applies builtin slash commands instead of queueing them", async () => {
@@ -183,6 +188,51 @@ describe("InputController skill queue chip metadata", () => {
 			queueChipText: "/skill:test-skill arg1 arg2",
 		});
 		expect(promptCustomMessage.mock.calls[0]?.[0].details.__queueChipText).toBeUndefined();
+	});
+
+	it("injects every skill token and submits the remaining text", async () => {
+		const { ctx, editor, promptCustomMessage, prompt } = createStubInputControllerContext({
+			skillCommands,
+			isStreaming: true,
+		});
+		const controller = new InputController(ctx);
+
+		controller.setupEditorSubmitHandler();
+		editor.setText("先用 /skill:test-skill arg1 /skill:other-skill arg2 幫我處理");
+		await editor.onSubmit?.("先用 /skill:test-skill arg1 /skill:other-skill arg2 幫我處理");
+
+		expect(promptCustomMessage).toHaveBeenCalledTimes(2);
+		expect(promptCustomMessage.mock.calls[0]?.[0].details.name).toBe("test-skill");
+		expect(promptCustomMessage.mock.calls[0]?.[0].details.args).toBeUndefined();
+		expect(promptCustomMessage.mock.calls[0]?.[1]).toEqual({
+			streamingBehavior: "steer",
+			queueChipText: "/skill:test-skill",
+		});
+		expect(promptCustomMessage.mock.calls[1]?.[0].details.name).toBe("other-skill");
+		expect(promptCustomMessage.mock.calls[1]?.[0].details.args).toBeUndefined();
+		expect(promptCustomMessage.mock.calls[1]?.[1]).toEqual({
+			streamingBehavior: "steer",
+			queueChipText: "/skill:other-skill",
+		});
+		expect(prompt).toHaveBeenCalledWith("先用 arg1 arg2 幫我處理", { images: undefined, streamingBehavior: "steer" });
+	});
+
+	it("injects embedded skill tokens during follow-ups and queues remaining text", async () => {
+		const { ctx, editor, promptCustomMessage, prompt } = createStubInputControllerContext({
+			skillCommands,
+			isStreaming: true,
+		});
+		const controller = new InputController(ctx);
+
+		editor.setText("review /skill:test-skill then /skill:other-skill");
+		await controller.handleFollowUp();
+
+		expect(promptCustomMessage).toHaveBeenCalledTimes(2);
+		expect(promptCustomMessage.mock.calls[0]?.[0].details.name).toBe("test-skill");
+		expect(promptCustomMessage.mock.calls[0]?.[1]?.queueChipText).toBe("/skill:test-skill");
+		expect(promptCustomMessage.mock.calls[1]?.[0].details.name).toBe("other-skill");
+		expect(promptCustomMessage.mock.calls[1]?.[1]?.queueChipText).toBe("/skill:other-skill");
+		expect(prompt).toHaveBeenCalledWith("review then", { images: undefined, streamingBehavior: "followUp" });
 	});
 });
 

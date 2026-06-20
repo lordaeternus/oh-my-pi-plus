@@ -27,6 +27,26 @@ import { ensureSupportedImageInput, ImageInputTooLargeError, loadImageInput } fr
 import { resizeImage } from "../../utils/image-resize";
 import { generateSessionTitle, setSessionTerminalTitle } from "../../utils/title-generator";
 
+const SKILL_COMMAND_NAME_PREFIX = "skill:";
+const SKILL_TOKEN_PREFIX = "/skill:";
+const SKILL_NAME_BOUNDARY_PATTERN = /[A-Za-z0-9_-]/;
+
+function isSkillTokenStartBoundary(char: string | undefined): boolean {
+	return char === undefined || /\s/.test(char);
+}
+
+function isSkillTokenEndBoundary(char: string | undefined): boolean {
+	return char === undefined || !SKILL_NAME_BOUNDARY_PATTERN.test(char);
+}
+
+interface SkillInvocation {
+	commandName: string;
+	skillPath: string;
+	start: number;
+	end: number;
+	token: string;
+}
+
 interface Expandable {
 	setExpanded(expanded: boolean): void;
 }
@@ -596,8 +616,12 @@ export class InputController {
 			// free-text Enter semantics applied a few lines below at the streaming
 			// branch). Ctrl+Enter routes through `handleFollowUp` and dispatches the
 			// same helper with `"followUp"`.
-			if (await this.#invokeSkillCommand(text, "steer")) {
+			const skillResult = await this.#invokeSkillCommand(text, "steer");
+			if (skillResult === true) {
 				return;
+			}
+			if (typeof skillResult === "string") {
+				text = skillResult;
 			}
 
 			// Handle bash command (! for normal, !! for excluded from context)
@@ -903,27 +927,91 @@ export class InputController {
 	}
 
 	/**
-	 * Dispatch a `/skill:<name> [args]` invocation through `promptCustomMessage`
-	 * using the supplied `streamingBehavior`. Returns true if the text was a
-	 * recognised skill command and was dispatched. A failure to load the skill
-	 * file is surfaced via `showError` but still returns true — the editor was
-	 * already cleared on the success path, so falling through to plain-text
-	 * handling at that point would double-submit. Returns false when the text
-	 * isn't a `/skill:` prefix or the command name isn't a registered skill,
-	 * so the caller can fall through to plain-text handling (this branch
-	 * leaves the editor state untouched). `streamingBehavior` is only consulted
-	 * while the agent is streaming; the idle path of `promptCustomMessage`
-	 * ignores it.
+	 * Dispatch `/skill:<name>` tokens through `promptCustomMessage`.
+	 *
+	 * A single leading `/skill:<name> [args]` keeps the historical args-as-skill-input
+	 * behavior. Embedded or repeated skill tokens are treated as prompt annotations:
+	 * every registered token is injected, and the non-skill text falls through as the
+	 * user prompt.
 	 */
-	async #invokeSkillCommand(text: string, streamingBehavior: "steer" | "followUp"): Promise<boolean> {
-		if (!text.startsWith("/skill:")) return false;
-		const spaceIndex = text.indexOf(" ");
-		const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
-		const args = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1).trim();
-		const skillPath = this.ctx.skillCommands?.get(commandName);
-		if (!skillPath) return false;
-		this.ctx.editor.addToHistory(text);
-		this.ctx.editor.setText("");
+	async #invokeSkillCommand(text: string, streamingBehavior: "steer" | "followUp"): Promise<string | boolean> {
+		const invocations = this.#findSkillInvocations(text);
+		if (invocations.length === 0) return false;
+
+		const isSingleLeadingCommand = invocations.length === 1 && invocations[0]?.start === 0;
+		const promptParts: string[] = [];
+		let cursor = 0;
+
+		for (const invocation of invocations) {
+			const args = isSingleLeadingCommand ? text.slice(invocation.end).trim() : "";
+			if (!isSingleLeadingCommand) {
+				const promptPart = text.slice(cursor, invocation.start).trim();
+				if (promptPart) promptParts.push(promptPart);
+				cursor = invocation.end;
+			}
+			await this.#dispatchSkillInvocation(invocation.commandName, invocation.skillPath, args, streamingBehavior, {
+				queueChipText: isSingleLeadingCommand ? text : invocation.token,
+			});
+		}
+
+		if (isSingleLeadingCommand) {
+			this.ctx.editor.addToHistory(text);
+			this.ctx.editor.setText("");
+			return true;
+		}
+
+		const finalPromptPart = text.slice(cursor).trim();
+		if (finalPromptPart) promptParts.push(finalPromptPart);
+
+		const prompt = promptParts.join(" ").trim();
+		if (!prompt) {
+			this.ctx.editor.addToHistory(text);
+			this.ctx.editor.setText("");
+			return true;
+		}
+		return prompt;
+	}
+
+	#findSkillInvocations(text: string): SkillInvocation[] {
+		const skillCommands = this.ctx.skillCommands;
+		if (!skillCommands || skillCommands.size === 0) return [];
+
+		const invocations: SkillInvocation[] = [];
+		let searchStart = 0;
+		while (searchStart < text.length) {
+			const start = text.indexOf(SKILL_TOKEN_PREFIX, searchStart);
+			if (start === -1) break;
+			searchStart = start + SKILL_TOKEN_PREFIX.length;
+			if (!isSkillTokenStartBoundary(text[start - 1])) continue;
+
+			let matched: SkillInvocation | undefined;
+			for (const [commandName, skillPath] of skillCommands) {
+				if (!commandName.startsWith(SKILL_COMMAND_NAME_PREFIX)) continue;
+				const token = `/${commandName}`;
+				const end = start + token.length;
+				if (
+					text.startsWith(token, start) &&
+					isSkillTokenEndBoundary(text[end]) &&
+					(!matched || token.length > matched.token.length)
+				) {
+					matched = { commandName, skillPath, start, end, token };
+				}
+			}
+			if (!matched) continue;
+
+			invocations.push(matched);
+			searchStart = matched.end;
+		}
+		return invocations;
+	}
+
+	async #dispatchSkillInvocation(
+		commandName: string,
+		skillPath: string,
+		args: string,
+		streamingBehavior: "steer" | "followUp",
+		options: { queueChipText: string },
+	): Promise<void> {
 		try {
 			const content = await Bun.file(skillPath).text();
 			const body = content.replace(/^---\n[\s\S]*?\n---\n/, "").trim();
@@ -932,7 +1020,7 @@ export class InputController {
 				metaLines.push(`User: ${args}`);
 			}
 			const message = `${body}\n\n---\n\n${metaLines.join("\n")}`;
-			const skillName = commandName.slice("skill:".length);
+			const skillName = commandName.slice(SKILL_COMMAND_NAME_PREFIX.length);
 			const details: SkillPromptDetails = {
 				name: skillName || commandName,
 				path: skillPath,
@@ -947,7 +1035,7 @@ export class InputController {
 					details,
 					attribution: "user",
 				},
-				{ streamingBehavior, queueChipText: text },
+				{ streamingBehavior, queueChipText: options.queueChipText },
 			);
 			if (this.ctx.session.isStreaming) {
 				this.ctx.updatePendingMessagesDisplay();
@@ -956,7 +1044,6 @@ export class InputController {
 		} catch (err) {
 			this.ctx.showError(`Failed to load skill: ${err instanceof Error ? err.message : String(err)}`);
 		}
-		return true;
 	}
 
 	async handleRetry(): Promise<void> {
@@ -1011,8 +1098,12 @@ export class InputController {
 		// Skill commands invoke through the custom-message path regardless of
 		// which keybinding submitted them. Enter routes them as `steer`;
 		// Ctrl+Enter (this handler) routes them as `followUp`.
-		if (await this.#invokeSkillCommand(text, "followUp")) {
+		const skillResult = await this.#invokeSkillCommand(text, "followUp");
+		if (skillResult === true) {
 			return;
+		}
+		if (typeof skillResult === "string") {
+			text = skillResult;
 		}
 
 		// Forward any pending clipboard-pasted images alongside the queued text;

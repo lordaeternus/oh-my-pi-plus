@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `/skill:<name>` input handling so embedded or repeated registered skill tokens are injected and the remaining text is submitted as the prompt. ([#3121](https://github.com/can1357/oh-my-pi/issues/3121))
+
 ## [16.1.7] - 2026-06-20
 
 ### Fixed
