@@ -1,32 +1,64 @@
 <p align="center">
-  <img src="https://github.com/can1357/oh-my-pi/blob/main/assets/hero.png?raw=true" alt="omp">
+  <img src="https://github.com/can1357/oh-my-pi/blob/main/assets/hero.png?raw=true" alt="omp-plus">
 </p>
 
 <p align="center">
-  <strong>A coding agent with the IDE wired in.</strong>
-  <strong><a href="https://omp.sh">omp.sh</a></strong>
+  <strong>A coding agent with the IDE wired in — Plus Edition.</strong>
+  <strong><a href="https://github.com/lordaeternus/oh-my-pi-plus">github.com/lordaeternus/oh-my-pi-plus</a></strong>
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@oh-my-pi/pi-coding-agent"><img src="https://img.shields.io/npm/v/@oh-my-pi/pi-coding-agent?style=flat&colorA=222222&colorB=CB3837" alt="npm version"></a>
-  <a href="https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-keep-E05735?style=flat&colorA=222222" alt="Changelog"></a>
-  <a href="https://github.com/can1357/oh-my-pi/actions"><img src="https://img.shields.io/github/actions/workflow/status/can1357/oh-my-pi/ci.yml?style=flat&colorA=222222&colorB=3FB950" alt="CI"></a>
-  <a href="https://github.com/can1357/oh-my-pi/blob/main/LICENSE"><img src="https://img.shields.io/github/license/can1357/oh-my-pi?style=flat&colorA=222222&colorB=58A6FF" alt="License"></a>
+  <a href="https://github.com/lordaeternus/oh-my-pi-plus/actions"><img src="https://img.shields.io/github/actions/workflow/status/lordaeternus/oh-my-pi-plus/ci.yml?style=flat&colorA=222222&colorB=3FB950" alt="CI"></a>
+  <a href="https://github.com/lordaeternus/oh-my-pi-plus/blob/main/LICENSE"><img src="https://img.shields.io/github/license/lordaeternus/oh-my-pi-plus?style=flat&colorA=222222&colorB=58A6FF" alt="License"></a>
   <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat&colorA=222222&logo=typescript&logoColor=white" alt="TypeScript"></a>
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-DEA584?style=flat&colorA=222222&logo=rust&logoColor=white" alt="Rust"></a>
   <a href="https://bun.sh"><img src="https://img.shields.io/badge/runtime-Bun-f472b6?style=flat&colorA=222222" alt="Bun"></a>
-  <a href="https://discord.gg/4NMW9cdXZa"><img src="https://img.shields.io/badge/Discord-5865F2?style=flat&colorA=222222&logo=discord&logoColor=white" alt="Discord"></a>
 </p>
 
 <p align="center">
-  Fork of <a href="https://github.com/badlogic/pi-mono">Pi</a> by <a href="https://github.com/mariozechner">@mariozechner</a> 
+  Fork of <a href="https://github.com/can1357/oh-my-pi">Oh My Pi</a> by <a href="https://github.com/can1357">@can1357</a><br>
+  (originally a fork of <a href="https://github.com/badlogic/pi-mono">Pi</a> by <a href="https://github.com/mariozechner">@mariozechner</a>)
 </p>
 
 The most capable agent surface that ships. Continuously tuned by real-world use — complete out of the box, open all the way down.
 
 **40+** providers · **32** built-in tools · **14** lsp ops · **28** dap ops · **~55k** lines of Rust core.
 
-## Install
+## Oh My Pi Plus Improvements
+
+**Oh My Pi Plus** is an enhanced fork of the original [Oh My Pi](https://github.com/can1357/oh-my-pi) focusing on token usage optimizations, manual review controls, and side-by-side run capabilities:
+
+- **Advisor Execution Modes (`advisor.mode`)**: Configure when the Advisor reviews the session.
+  - `every-turn` (default): Review after each turn (preserves original behavior).
+  - `end-of-task`: Review only when the primary agent successfully yields its final result.
+  - `risk-only`: Review only after edits, writes, tool failures, or on task completion.
+  - `manual`: Review only on demand via `/advisor review`.
+- **Omit Thinking Blocks (`advisor.includeThinking`)**: Option to exclude reasoning/thinking chains from Advisor updates to drastically reduce Advisor input tokens.
+- **Manual Trigger Command (`/advisor review`)**: Execute one Advisor review immediately in any mode, as long as the Advisor is enabled.
+- **Coexistence (`omp-plus`)**: Custom environment wrapper allows running this fork alongside the original `omp` globally, featuring unique welcome banner names and `π+` terminal title prefixes.
+
+## Install Fork from Source
+
+To run this fork side-by-side with your original `omp`:
+
+1. Clone and run setup:
+   ```sh
+   bun setup
+   bun run build-tool-views
+   ```
+2. Call the launcher script or configure the global commands `omp-plus.cmd` and `omp-plus.ps1` in your `C:\Users\<User>\.bun\bin\` directory.
+3. Start the fork using:
+   ```sh
+   omp-plus
+   ```
+
+---
+
+Original project instructions remain:
+
+---
+
+## Original Install
 
 **macOS · Linux**
 
@@ -59,6 +91,14 @@ mise use -g github:can1357/oh-my-pi
 ```
 
 macOS · Linux · Windows · bun ≥ 1.3.14
+
+---
+
+*The original description continues:*
+
+---
+
+## Original Info
 
 ### Shell completions
 
@@ -565,9 +605,6 @@ MIT. See [LICENSE](LICENSE).
 
 _made for terminals that stay open_
 
-- [omp.sh](https://omp.sh)
-- [GitHub](https://github.com/can1357/oh-my-pi)
-- [Changelog](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/CHANGELOG.md)
-- [npm](https://www.npmjs.com/package/@oh-my-pi/pi-coding-agent)
-- [Discord](https://discord.gg/4NMW9cdXZa)
-- [MIT](https://github.com/can1357/oh-my-pi/blob/main/LICENSE)
+- [GitHub](https://github.com/lordaeternus/oh-my-pi-plus)
+- [Changelog](https://github.com/lordaeternus/oh-my-pi-plus/blob/main/packages/coding-agent/CHANGELOG.md)
+- [MIT](https://github.com/lordaeternus/oh-my-pi-plus/blob/main/LICENSE)
