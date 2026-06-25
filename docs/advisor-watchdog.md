@@ -1,6 +1,6 @@
 # Advisor and WATCHDOG.md
 
-The advisor is an optional second model attached to a session. It reviews the primary agent's transcript after each turn, can inspect the workspace with read-only tools, and injects concise advice back into the primary session.
+The advisor is an optional second model attached to a session. It reviews the primary agent's transcript according to `advisor.mode` (default: after every turn), can inspect the workspace with read-only tools, and injects concise advice back into the primary session.
 
 The advisor is not a second executor. It cannot edit files, run commands, approve actions, or change session state directly.
 
@@ -45,6 +45,7 @@ Slash commands:
 | `/advisor on` | Enable the setting and start the runtime when an advisor model is assigned. |
 | `/advisor off` | Disable the setting and stop the runtime. |
 | `/advisor status` | Show active model, context usage, token usage, and cost. |
+| `/advisor review` | Queue an advisor review of the current transcript now, regardless of `advisor.mode`. |
 | `/advisor dump` | Copy the advisor's compact transcript to the clipboard. |
 | `/advisor dump raw` | Copy the advisor's full dump (system prompt, tools, thinking, and calls) to the clipboard. |
 
@@ -52,9 +53,9 @@ If `advisor.enabled` is true but no `modelRoles.advisor` value resolves to an av
 
 ## What the advisor sees
 
-At each primary turn end, `AdvisorRuntime` receives only the new transcript delta since the last advisor update. Deltas are rendered with `formatSessionHistoryMarkdown(..., { includeThinking: true, includeToolIntent: true, watchedRoles: true, expandPrimaryContext: true })`, so the advisor can review assistant reasoning as well as user-visible text, tool calls, and tool results.
+By default, at each primary turn end, `AdvisorRuntime` receives only the new transcript delta since the last advisor update. `advisor.mode` can instead run review only at task end, on risky activity, or manually via `/advisor review`; manual reviews queue immediately. Deltas are rendered with `formatSessionHistoryMarkdown(..., { includeThinking: advisor.includeThinking, includeToolIntent: true, watchedRoles: true, expandPrimaryContext: true })`. `advisor.includeThinking` defaults to `true`, so the advisor can review assistant reasoning as well as user-visible text, tool calls, and tool results; set it to `false` to omit thinking from advisor input.
 
-Most hidden `custom` messages collapse to a one-line summary in the delta. The exception is the primary agent's injected constraint context — the types in `PRIMARY_CONTEXT_CUSTOM_TYPES` (`plan-mode-context`, `plan-mode-reference`). `expandPrimaryContext` renders these verbatim inside a `<primary-context kind="…">` wrapper (XML-escaped, so plan/objective text cannot break out or read as advisor instructions). Without this the advisor only saw a 120-char truncation of the plan-mode rules — which cut off mid-sentence at `NEVER create, edit, or delete files — excep…`, hiding the "except the single plan file" carve-out and producing false blockers against the agent writing its own plan file. Because these prompts are re-injected verbatim every primary turn, `AdvisorRuntime` dedupes them: a byte-identical re-injection collapses to a `(unchanged — still in effect)` marker, and the full body re-expands whenever the content changes or the advisor re-primes. `goal-mode-context` is deliberately excluded — its live budget counters change every turn, so it can neither dedupe nor expand cheaply.
+Most hidden `custom` messages collapse to a one-line summary in the delta. The exception is the primary agent's injected constraint context — the types in `PRIMARY_CONTEXT_CUSTOM_TYPES` (`plan-mode-context`, `plan-mode-reference`). `expandPrimaryContext` renders these verbatim inside a `<primary-context kind="…">` wrapper (XML-escaped, so plan/objective text cannot break out or read as advisor instructions). Without this the advisor only saw a 120-char truncation of the plan-mode rules — which cut off mid-sentence at `NEVER create, edit, or delete files — excep…`, hiding the "except the single plan file" carve-out and producing false blockers against the agent writing its own plan file. Because these prompts can be re-injected verbatim across advisor updates, `AdvisorRuntime` dedupes them: a byte-identical re-injection collapses to a `(unchanged — still in effect)` marker, and the full body re-expands whenever the content changes or the advisor re-primes. `goal-mode-context` is deliberately excluded — its live budget counters change every turn, so it can neither dedupe nor expand cheaply.
 
 Advisor messages already injected into the primary transcript are filtered out before the next delta is rendered. This prevents the advisor from recursively reviewing its own advice.
 

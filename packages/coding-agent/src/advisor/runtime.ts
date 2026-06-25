@@ -20,6 +20,8 @@ export interface AdvisorRuntimeHost {
 	enqueueAdvice(note: string, severity?: "nit" | "concern" | "blocker"): void;
 	/** Redact primary transcript bytes before they reach the advisor model. */
 	obfuscator?: SecretObfuscator;
+	/** Whether primary thinking blocks should be included in advisor deltas. */
+	includeThinking?: () => boolean;
 	/**
 	 * Pre-prompt context maintenance for the advisor's own append-only context.
 	 * Promotes the advisor model to a larger sibling when its context nears the
@@ -181,7 +183,7 @@ export class AdvisorRuntime {
 		const obfuscator = this.host.obfuscator;
 		const formattedDelta = obfuscator?.hasSecrets() ? obfuscateAdvisorDelta(obfuscator, delta) : delta;
 		const md = formatSessionHistoryMarkdown(formattedDelta, {
-			includeThinking: true,
+			includeThinking: this.host.includeThinking?.() ?? true,
 			includeToolIntent: true,
 			watchedRoles: true,
 			expandPrimaryContext: true,

@@ -15,6 +15,7 @@ import titleMarkerSystemPrompt from "../prompts/system/title-system-marker.md" w
 import { isTinyTitleLocalModelKey, ONLINE_TINY_TITLE_MODEL_KEY } from "../tiny/models";
 import { formatTitleUserMessage, isLowSignalTitleInput, normalizeGeneratedTitle } from "../tiny/text";
 import { tinyTitleClient } from "../tiny/title-client";
+import { getTerminalTitlePrefix } from "./branding";
 
 const TITLE_SYSTEM_PROMPT = prompt.render(titleSystemPrompt);
 const TITLE_MARKER_SYSTEM_PROMPT = prompt.render(titleMarkerSystemPrompt);
@@ -316,7 +317,8 @@ function getFallbackTerminalTitle(cwd: string | undefined): string | undefined {
 
 export function formatSessionTerminalTitle(sessionName: string | undefined, cwd?: string): string {
 	const label = sanitizeTerminalTitlePart(sessionName) ?? getFallbackTerminalTitle(cwd);
-	return label ? `${DEFAULT_TERMINAL_TITLE}: ${label}` : DEFAULT_TERMINAL_TITLE;
+	const prefix = getTerminalTitlePrefix();
+	return label ? `${prefix}: ${label}` : prefix;
 }
 
 /**

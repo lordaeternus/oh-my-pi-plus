@@ -434,11 +434,12 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 		name: "advisor",
 		description: "Toggle the advisor (a second model that reviews each turn and injects notes)",
 		acpDescription: "Toggle advisor",
-		acpInputHint: "[on|off|status|dump [raw]]",
+		acpInputHint: "[on|off|status|review|dump [raw]]",
 		subcommands: [
 			{ name: "on", description: "Enable the advisor" },
 			{ name: "off", description: "Disable the advisor" },
 			{ name: "status", description: "Show advisor status" },
+			{ name: "review", description: "Queue an advisor review now" },
 			{ name: "dump", description: "Copy the advisor's transcript to clipboard", usage: "[raw]" },
 		],
 		allowArgs: true,
@@ -478,13 +479,18 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 				await runtime.output(runtime.session.formatAdvisorStatus());
 				return commandConsumed();
 			}
+			if (verb === "review") {
+				const queued = await runtime.session.requestAdvisorReview();
+				await runtime.output(queued ? "Advisor review queued." : "Advisor is not active for this session.");
+				return commandConsumed();
+			}
 			if (verb === "dump") {
 				const isRaw = rest.toLowerCase() === "raw";
 				const text = runtime.session.formatAdvisorHistoryAsText({ compact: !isRaw });
 				await runtime.output(text ?? "Advisor is not active for this session.");
 				return commandConsumed();
 			}
-			return usage("Usage: /advisor [on|off|status|dump [raw]]", runtime);
+			return usage("Usage: /advisor [on|off|status|review|dump [raw]]", runtime);
 		},
 		handleTui: async (command, runtime) => {
 			const { verb, rest } = parseSubcommand(command.args);
@@ -523,13 +529,19 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 				runtime.ctx.editor.setText("");
 				return;
 			}
+			if (verb === "review") {
+				const queued = await runtime.ctx.session.requestAdvisorReview();
+				runtime.ctx.showStatus(queued ? "Advisor review queued." : "Advisor is not active for this session.");
+				runtime.ctx.editor.setText("");
+				return;
+			}
 			if (verb === "dump") {
 				const isRaw = rest.toLowerCase() === "raw";
 				runtime.ctx.handleAdvisorDumpCommand(isRaw);
 				runtime.ctx.editor.setText("");
 				return;
 			}
-			runtime.ctx.showStatus("Usage: /advisor [on|off|status|dump [raw]]");
+			runtime.ctx.showStatus("Usage: /advisor [on|off|status|review|dump [raw]]");
 			runtime.ctx.editor.setText("");
 		},
 	},

@@ -275,6 +275,9 @@ const EMPTY_STRING_RECORD: Record<string, string> = {};
 const DEFAULT_CYCLE_ORDER: string[] = ["smol", "default", "slow"];
 const EMPTY_MODEL_TAGS_RECORD: ModelTagsSettings = {};
 const HINDSIGHT_RECALL_TYPES_DEFAULT: string[] = ["world", "experience"];
+export const ADVISOR_MODE_VALUES = ["every-turn", "end-of-task", "risk-only", "manual"] as const;
+export type AdvisorMode = (typeof ADVISOR_MODE_VALUES)[number];
+
 export const DEFAULT_BASH_INTERCEPTOR_RULES: BashInterceptorRule[] = [
 	{
 		pattern: "^\\s*(cat|head|tail|less|more)\\s+",
@@ -385,6 +388,52 @@ export const SETTINGS_SCHEMA = {
 			label: "Enable Advisor",
 			description:
 				"Pair a second model (assigned to the 'advisor' role) that passively reviews each turn and injects notes.",
+		},
+	},
+	"advisor.mode": {
+		type: "enum",
+		values: ADVISOR_MODE_VALUES,
+		default: "every-turn",
+		ui: {
+			tab: "model",
+			group: "Advisor",
+			label: "Advisor Mode",
+			description:
+				"Choose when the advisor reviews the session. Every turn preserves the current behavior; other modes reduce token use.",
+			options: [
+				{
+					value: "every-turn",
+					label: "Every turn",
+					description: "Review after each primary turn. Highest coverage, highest token use.",
+				},
+				{
+					value: "end-of-task",
+					label: "End of task",
+					description: "Review when the agent submits its final result. Lower token use.",
+				},
+				{
+					value: "risk-only",
+					label: "Risk only",
+					description: "Review only after edits, failed tools, or other risky activity.",
+				},
+				{
+					value: "manual",
+					label: "Manual",
+					description: "Review only when /advisor review is used.",
+				},
+			],
+			condition: "advisorEnabled",
+		},
+	},
+	"advisor.includeThinking": {
+		type: "boolean",
+		default: true,
+		ui: {
+			tab: "model",
+			group: "Advisor",
+			label: "Advisor Reads Thinking",
+			description: "Include assistant thinking in advisor updates. Turning this off can reduce advisor input tokens.",
+			condition: "advisorEnabled",
 		},
 	},
 	"advisor.subagents": {

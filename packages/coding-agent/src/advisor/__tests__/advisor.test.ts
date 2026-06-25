@@ -448,6 +448,7 @@ describe("advisor", () => {
 			expect(promptInputs[0]).not.toContain("note");
 		});
 
+
 		it("obfuscates session updates before prompting the advisor", async () => {
 			const secret = "ADVISOR_SECRET_TOKEN_123";
 			const obfuscator = new SecretObfuscator([{ type: "plain", content: secret }]);

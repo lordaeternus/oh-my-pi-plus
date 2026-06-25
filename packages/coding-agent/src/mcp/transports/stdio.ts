@@ -26,6 +26,7 @@ import { isMCPTimeoutEnabled, resolveMCPTimeoutMs } from "../timeout";
 export interface StdioSpawnCommand {
 	cmd: string[];
 	windowsHide?: boolean;
+	windowsVerbatimArguments?: boolean;
 }
 
 /** Inputs used to resolve platform-specific stdio spawn behavior. */
@@ -245,6 +246,7 @@ export async function resolveStdioSpawnCommand(
 	return {
 		cmd: [resolveComSpec(options.env), "/d", "/s", "/c", buildCmdExeCommand(resolvedCommand, args)],
 		windowsHide: true,
+		windowsVerbatimArguments: true,
 	};
 }
 
@@ -348,6 +350,7 @@ export class StdioTransport implements MCPTransport {
 			stdout: "pipe",
 			stderr: "pipe",
 			windowsHide: spawnCommand.windowsHide,
+			windowsVerbatimArguments: spawnCommand.windowsVerbatimArguments,
 		});
 
 		this.#connected = true;

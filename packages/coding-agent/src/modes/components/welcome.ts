@@ -7,8 +7,8 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@oh-my-pi/pi-tui";
-import { APP_NAME } from "@oh-my-pi/pi-utils";
 import { theme } from "../../modes/theme/theme";
+import { getAppDisplayName } from "../../utils/branding";
 import tipsText from "./tips.txt" with { type: "text" };
 
 /** Tips embedded at build time, one per line; blanks dropped. */
@@ -354,7 +354,7 @@ export class WelcomeComponent implements Component {
 		const lines: string[] = [];
 
 		// Top border with embedded title
-		const title = ` ${APP_NAME} v${this.version} `;
+		const title = ` ${getAppDisplayName()} v${this.version} `;
 		const titlePrefixRaw = hChar.repeat(3);
 		const titleStyled = theme.fg("dim", titlePrefixRaw) + theme.fg("muted", title);
 		const titleVisLen = visibleWidth(titlePrefixRaw) + visibleWidth(title);

@@ -1160,6 +1160,7 @@ export class AgentSession {
 	#goalModeState: GoalModeState | undefined;
 	#goalRuntime: GoalRuntime;
 	#advisorRuntime?: AdvisorRuntime;
+	#advisorRiskPending = false;
 	#advisorEnabled = false;
 	/** The advisor's own agent, retained so `/dump advisor` can serialize its transcript. Undefined when no advisor is active. */
 	#advisorAgent?: Agent;
@@ -1620,14 +1621,11 @@ export class AgentSession {
 				await this.#applyRewind(rewindReport, messages);
 			}
 			this.#advisorPrimaryTurnsCompleted++;
-			if (this.#advisorRuntime && !this.#advisorRuntime.disposed) {
-				this.#advisorRuntime.onTurnEnd(messages);
-				const syncBacklog = this.settings.get("advisor.syncBacklog");
-				if (syncBacklog !== "off") {
-					const threshold = parseInt(syncBacklog, 10);
-					await this.#advisorRuntime.waitForCatchup(30000, threshold, signal);
-				}
-			}
+			await this.#runAdvisorReviewIfNeeded(
+				messages,
+				signal,
+				this.settings.get("advisor.mode") === "risk-only" && this.#advisorRiskPending ? "risk" : "turn",
+			);
 			await this.#maintainContextMidRun(messages, signal);
 		});
 		this.yieldQueue = new YieldQueue({
@@ -1799,6 +1797,7 @@ export class AgentSession {
 		this.#advisorRuntime?.reset();
 		this.#attachAdvisorRecorderFeed();
 		this.#advisorPrimaryTurnsCompleted = 0;
+		this.#advisorRiskPending = false;
 		this.#advisorInterruptImmuneTurnStart = undefined;
 		this.#advisorAutoResumeSuppressed = false;
 		this.yieldQueue.clear("advisor");
@@ -1806,6 +1805,42 @@ export class AgentSession {
 		if (this.#pendingNextTurnMessages.some(isAdvisorCard)) {
 			this.#pendingNextTurnMessages = this.#pendingNextTurnMessages.filter(m => !isAdvisorCard(m));
 		}
+	}
+
+	#markAdvisorRiskFromToolResult(toolName: string | undefined, isError: boolean | undefined): void {
+		if (isError) {
+			this.#advisorRiskPending = true;
+			return;
+		}
+		if (!toolName) return;
+		if (toolName === "edit" || toolName === "write" || toolName === "ast_edit") {
+			this.#advisorRiskPending = true;
+		}
+	}
+
+	async #runAdvisorReviewIfNeeded(
+		messages: AgentMessage[],
+		signal: AbortSignal | undefined,
+		reason: "turn" | "task-end" | "risk" | "manual",
+	): Promise<boolean> {
+		if (!this.#advisorRuntime || this.#advisorRuntime.disposed) return false;
+		const mode = this.settings.get("advisor.mode");
+		const shouldRun =
+			reason === "manual" ||
+			mode === "every-turn" ||
+			(mode === "end-of-task" && reason === "task-end") ||
+			(mode === "risk-only" && (reason === "risk" || reason === "task-end") && this.#advisorRiskPending);
+		if (!shouldRun) return false;
+
+		this.#advisorRuntime.onTurnEnd(messages);
+		this.#advisorRiskPending = false;
+
+		const syncBacklog = this.settings.get("advisor.syncBacklog");
+		if (syncBacklog !== "off") {
+			const threshold = parseInt(syncBacklog, 10);
+			await this.#advisorRuntime.waitForCatchup(30000, threshold, signal);
+		}
+		return true;
 	}
 
 	#buildAdvisorRuntime(seedToCurrent = false): boolean {
@@ -1946,6 +1981,7 @@ export class AgentSession {
 			snapshotMessages: () => this.agent.state.messages,
 			enqueueAdvice,
 			maintainContext: incomingTokens => this.#maintainAdvisorContext(incomingTokens),
+			includeThinking: () => this.settings.get("advisor.includeThinking"),
 			obfuscator: this.#obfuscator,
 		});
 		if (seedToCurrent) {
@@ -2716,6 +2752,7 @@ export class AgentSession {
 					isError?: boolean;
 					content?: Array<TextContent | ImageContent>;
 				};
+				this.#markAdvisorRiskFromToolResult(toolName, isError);
 				// A tool actually ran. Clear the post-reminder suppression: the agent did
 				// productive work in response to the prior nudge, so the next text-only stop
 				// is allowed to escalate to the next reminder if todos remain incomplete.
@@ -2851,6 +2888,9 @@ export class AgentSession {
 					maintenanceRoute("successful-yield-no-active-goal");
 				} else {
 					maintenanceRoute("post-yield-trailing-stop-suppressed");
+				}
+				if (yieldOnThisMessage) {
+					await this.#runAdvisorReviewIfNeeded(settledMessages, undefined, "task-end");
 				}
 				await emitAgentEndNotification();
 				return;
@@ -13052,6 +13092,16 @@ export class AgentSession {
 	 */
 	isAdvisorActive(): boolean {
 		return this.#advisorAgent !== undefined;
+	}
+
+	/**
+	 * Queue an advisor review for the current transcript.
+	 *
+	 * @returns true when an advisor runtime accepted the review.
+	 */
+	async requestAdvisorReview(): Promise<boolean> {
+		if (!this.#buildAdvisorRuntime()) return false;
+		return this.#runAdvisorReviewIfNeeded(this.agent.state.messages, undefined, "manual");
 	}
 
 	/**
