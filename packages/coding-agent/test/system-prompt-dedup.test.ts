@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { ContextMapResult } from "@oh-my-pi/pi-coding-agent/context-map";
 import {
 	buildSystemPrompt,
 	loadProjectContextFiles,
@@ -137,9 +138,55 @@ describe("SYSTEM.md prompt assembly", () => {
 		expect(promptText).toContain("CLI custom prompt");
 		expect(promptText).toContain("<workspace-tree>");
 		expect(promptText).toContain("<dir-context>");
-		expect(promptText).toContain(`current working directory is '${projectDir}'`);
+		expect(promptText).toContain(`current working directory is '${projectDir.replace(/\\/g, "/")}'`);
 		expect(appendMatches).toHaveLength(1);
 		expect(promptText).not.toContain("Discovered project SYSTEM prompt");
+	});
+
+	it("omits context-map when no context map is supplied", async () => {
+		const projectDir = path.join(tempDir, "project");
+		fs.mkdirSync(projectDir, { recursive: true });
+
+		const { systemPrompt } = await buildSystemPrompt({
+			cwd: projectDir,
+			customPrompt: "Base prompt",
+			contextFiles: [],
+			skills: [],
+			rules: [],
+			toolNames: [],
+		});
+
+		expect(systemPrompt.join("\n\n")).not.toContain("<context-map>");
+	});
+
+	it("renders a supplied context map as its own project prompt block", async () => {
+		const projectDir = path.join(tempDir, "project");
+		const contextMap: ContextMapResult = {
+			rendered:
+				'<context-map>\n<file path="src/context-map.ts">\nexport interface ContextMapResult\n</file>\n</context-map>',
+			usedTokens: 12,
+			files: ["src/context-map.ts"],
+			truncated: false,
+		};
+		fs.mkdirSync(projectDir, { recursive: true });
+
+		const promptOptions = {
+			cwd: projectDir,
+			customPrompt: "Base prompt",
+			contextFiles: [],
+			skills: [],
+			rules: [],
+			toolNames: [],
+			contextMap,
+		};
+
+		const { systemPrompt } = await buildSystemPrompt(promptOptions);
+
+		expect(systemPrompt).toHaveLength(3);
+		expect(systemPrompt[0]).not.toContain("<context-map>");
+		expect(systemPrompt[1]).toBe(contextMap.rendered);
+		expect(systemPrompt[2]).toContain("PROJECT");
+		expect(systemPrompt[2]).toContain(`current working directory is '${projectDir.replace(/\\/g, "/")}'`);
 	});
 
 	it("prefers project SYSTEM.md over user SYSTEM.md", async () => {

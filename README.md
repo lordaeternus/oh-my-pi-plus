@@ -35,6 +35,7 @@ The most capable agent surface that ships. Continuously tuned by real-world use 
   - `manual`: Review only on demand via `/advisor review`.
 - **Omit Thinking Blocks (`advisor.includeThinking`)**: Option to exclude reasoning/thinking chains from Advisor updates to drastically reduce Advisor input tokens.
 - **Manual Trigger Command (`/advisor review`)**: Execute one Advisor review immediately in any mode, as long as the Advisor is enabled.
+- **Context Map (`contextMap.enabled`, `contextMap.budgetTokens`)**: Opt-in per-turn repository context mapper that generates task-aware, signature-only structure blocks from native signals without relying on CodeGraph.
 - **Coexistence (`omp-plus`)**: Custom environment wrapper allows running this fork alongside the original `omp` globally, featuring unique welcome banner names and `π+` terminal title prefixes.
 
 ## Install Fork from Source

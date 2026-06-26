@@ -35,6 +35,12 @@ import {
 } from "../tts/models";
 import { EDIT_MODES } from "../utils/edit-mode";
 import { SEARCH_PROVIDER_OPTIONS, SEARCH_PROVIDER_PREFERENCES, type SearchProviderId } from "../web/search/types";
+import {
+	SERVICE_TIER_INHERIT_OPTIONS,
+	SERVICE_TIER_INHERIT_SETTING_VALUES,
+	SERVICE_TIER_OPTIONS,
+	SERVICE_TIER_SETTING_VALUES,
+} from "./service-tier";
 
 /** Unified settings schema - single source of truth for all settings.
  *
@@ -432,7 +438,8 @@ export const SETTINGS_SCHEMA = {
 			tab: "model",
 			group: "Advisor",
 			label: "Advisor Reads Thinking",
-			description: "Include assistant thinking in advisor updates. Turning this off can reduce advisor input tokens.",
+			description:
+				"Include assistant thinking in advisor updates. Turning this off can reduce advisor input tokens.",
 			condition: "advisorEnabled",
 		},
 	},
@@ -1028,6 +1035,28 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
+	"contextMap.enabled": {
+		type: "boolean",
+		default: false,
+		ui: {
+			tab: "model",
+			group: "Prompt",
+			label: "Context Map",
+			description: "Append a per-turn code context map to the system prompt based on the current user prompt.",
+		},
+	},
+
+	"contextMap.budgetTokens": {
+		type: "number",
+		default: 1000,
+		ui: {
+			tab: "model",
+			group: "Prompt",
+			label: "Context Map Budget",
+			description: "Maximum tokens for the per-turn Context Map system prompt block.",
+		},
+	},
+
 	personality: {
 		type: "enum",
 		values: ["default", "friendly", "pragmatic", "none"] as const,
@@ -1171,7 +1200,7 @@ export const SETTINGS_SCHEMA = {
 
 	serviceTier: {
 		type: "enum",
-		values: ["none", "auto", "default", "flex", "scale", "priority", "openai-only", "claude-only"] as const,
+		values: SERVICE_TIER_SETTING_VALUES,
 		default: "none",
 		ui: {
 			tab: "model",
@@ -1179,28 +1208,36 @@ export const SETTINGS_SCHEMA = {
 			label: "Service Tier",
 			description:
 				'Processing priority hint (none = omit). OpenAI accepts the tier values directly; Anthropic realizes `priority` as `speed: "fast"` on supported Opus models. Scoped values target one family.',
-			options: [
-				{ value: "none", label: "None", description: "Omit service_tier parameter" },
-				{ value: "auto", label: "Auto", description: "Use provider default tier selection (OpenAI)" },
-				{ value: "default", label: "Default", description: "Standard priority processing (OpenAI)" },
-				{ value: "flex", label: "Flex", description: "Flexible capacity tier when available (OpenAI)" },
-				{ value: "scale", label: "Scale", description: "Scale Tier credits when available (OpenAI)" },
-				{
-					value: "priority",
-					label: "Priority",
-					description: "Priority on every supported provider (OpenAI `service_tier`, Anthropic fast mode)",
-				},
-				{
-					value: "openai-only",
-					label: "Priority (OpenAI only)",
-					description: "Priority on OpenAI/OpenAI-Codex requests; ignored elsewhere",
-				},
-				{
-					value: "claude-only",
-					label: "Priority (Claude only)",
-					description: "Anthropic fast mode on direct Claude requests; ignored elsewhere (incl. Bedrock/Vertex)",
-				},
-			],
+			options: SERVICE_TIER_OPTIONS,
+		},
+	},
+
+	serviceTierSubagent: {
+		type: "enum",
+		values: SERVICE_TIER_INHERIT_SETTING_VALUES,
+		default: "inherit",
+		ui: {
+			tab: "model",
+			group: "Sampling",
+			label: "Service Tier - Subagent",
+			description:
+				"Service Tier for spawned task/eval subagents. Inherit = match the main agent's live tier (tracks /fast); pick a value to scope subagents independently.",
+			options: SERVICE_TIER_INHERIT_OPTIONS,
+		},
+	},
+
+	serviceTierAdvisor: {
+		type: "enum",
+		values: SERVICE_TIER_INHERIT_SETTING_VALUES,
+		default: "none",
+		ui: {
+			tab: "model",
+			group: "Sampling",
+			label: "Service Tier - Advisor",
+			description:
+				"Service Tier for the advisor model. None = standard processing; Inherit = match the main agent's live tier; pick a value (e.g. Priority) to run the advisor on a faster serving path.",
+			options: SERVICE_TIER_INHERIT_OPTIONS,
+			condition: "advisorEnabled",
 		},
 	},
 
@@ -4090,6 +4127,17 @@ export const SETTINGS_SCHEMA = {
 	},
 
 	// Provider selection
+	"providers.ollama-cloud.maxConcurrency": {
+		type: "number",
+		default: 3,
+		ui: {
+			tab: "providers",
+			group: "Services",
+			label: "Ollama Cloud Max Concurrency",
+			description:
+				"Maximum concurrent Ollama Cloud subagent runs per process; 0 disables the provider-specific limit",
+		},
+	},
 	"providers.webSearch": {
 		type: "enum",
 		values: SEARCH_PROVIDER_PREFERENCES,

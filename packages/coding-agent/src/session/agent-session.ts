@@ -160,8 +160,10 @@ import {
 } from "../config/model-resolver";
 import { MODEL_ROLE_IDS, MODEL_ROLES } from "../config/model-roles";
 import { expandPromptTemplate, type PromptTemplate } from "../config/prompt-templates";
+import { resolveServiceTierSetting } from "../config/service-tier";
 import type { Settings, SkillsSettings } from "../config/settings";
 import { getDefault, onAppendOnlyModeChanged } from "../config/settings";
+import { buildContextMap } from "../context-map";
 import { RawSseDebugBuffer } from "../debug/raw-sse-buffer";
 import { loadCapability } from "../discovery";
 import { expandApplyPatchToEntries, normalizeDiff, normalizeToLF, ParseError, previewPatch, stripBom } from "../edit";
@@ -518,6 +520,10 @@ export interface AgentSessionConfig {
 	defaultSelectedMCPServerNames?: string[];
 	/** MCP tool names that should seed brand-new sessions created from this AgentSession. */
 	defaultSelectedMCPToolNames?: string[];
+	/** Append a per-turn Context Map system prompt block for the current prompt. */
+	contextMapEnabled?: boolean;
+	/** Token budget for the per-turn Context Map block. */
+	contextMapBudgetTokens?: number;
 	/** TTSR manager for time-traveling stream rules */
 	ttsrManager?: TtsrManager;
 	/** Secret obfuscator for deobfuscating streaming edit content */
@@ -1278,6 +1284,8 @@ export class AgentSession {
 	#requestedToolNames: ReadonlySet<string> | undefined;
 	#baseSystemPrompt: string[];
 	#baseSystemPromptBeforeMemoryPromotion: string[] | undefined;
+	#contextMapEnabled = false;
+	#contextMapBudgetTokens = 1000;
 	/**
 	 * Signature of the (toolNames, tool descriptions) tuple passed to the most
 	 * recent successful `rebuildSystemPrompt` call. Used to skip redundant rebuilds
@@ -1660,6 +1668,8 @@ export class AgentSession {
 		this.#reloadSshTool = config.reloadSshTool;
 		this.#disconnectOwnedMcpManager = config.disconnectOwnedMcpManager;
 		this.#baseSystemPrompt = this.agent.state.systemPrompt;
+		this.#contextMapEnabled = config.contextMapEnabled === true;
+		this.#contextMapBudgetTokens = config.contextMapBudgetTokens ?? 1000;
 		this.#promptModelKey = this.#currentPromptModelKey();
 		this.#mcpDiscoveryEnabled = config.mcpDiscoveryEnabled ?? false;
 		this.#setDiscoverableMCPTools(this.#collectDiscoverableMCPToolsFromRegistry());
@@ -1922,6 +1932,16 @@ export class AgentSession {
 		}
 		const advisorSessionId = this.sessionId ? `${this.sessionId}-advisor` : undefined;
 
+		// Advisor service tier (`serviceTierAdvisor`): "none" (default) runs the
+		// advisor on standard processing; "inherit" tracks the session's live tier
+		// per request (like the main agent, including /fast toggles) via a resolver;
+		// a concrete value pins the advisor to that tier regardless of the session.
+		const advisorTierSetting = this.settings.get("serviceTierAdvisor");
+		const advisorServiceTier =
+			advisorTierSetting === "inherit" ? undefined : resolveServiceTierSetting(advisorTierSetting, undefined);
+		const advisorServiceTierResolver =
+			advisorTierSetting === "inherit" ? (model: Model) => this.#effectiveServiceTier(model) : undefined;
+
 		// Thread the primary's telemetry into the advisor loop so the advisor
 		// model's GenAI spans + usage/cost hooks fire like every other model call,
 		// stamped with the advisor's own identity. `conversationId` is cleared so
@@ -1951,6 +1971,8 @@ export class AgentSession {
 			getApiKey: requestModel => this.#modelRegistry.resolver(requestModel, advisorSessionId),
 			intentTracing: false,
 			telemetry: advisorTelemetry,
+			serviceTier: advisorServiceTier,
+			serviceTierResolver: advisorServiceTierResolver,
 		});
 		advisorAgent.setDisableReasoning(shouldDisableReasoning(advisorThinkingLevel));
 
@@ -2834,6 +2856,9 @@ export class AgentSession {
 				return;
 			}
 
+			const successfulYieldMessage = this.#findSuccessfulYieldAssistantMessage(settledMessages);
+			const yieldOnThisMessage = this.#assistantEndedWithSuccessfulYield(msg);
+
 			const maintenanceRoute = (route: string, extra?: Record<string, unknown>) => {
 				logger.debug("agent_end maintenance routing", {
 					route,
@@ -2845,7 +2870,7 @@ export class AgentSession {
 					hasText: msg.content.some(content => content.type === "text"),
 					goalModeEnabled: this.#goalModeState?.enabled === true,
 					goalStatus: this.#goalModeState?.goal.status,
-					successfulYield: this.#assistantEndedWithSuccessfulYield(msg),
+					successfulYield: successfulYieldMessage !== undefined,
 					...extra,
 				});
 			};
@@ -2870,21 +2895,24 @@ export class AgentSession {
 			}
 
 			const activeGoal = this.#goalModeState?.enabled === true && this.#goalModeState.goal.status === "active";
-			const yieldOnThisMessage = this.#assistantEndedWithSuccessfulYield(msg);
 			// A successful `yield` in this run is terminal for execution purposes.
 			// Suppress empty-stop retry, unexpected-stop retry, queued-message drain,
 			// and compaction-driven continuations for the rest of this prompt cycle:
 			// the executor consumed the yield as the terminal result, so a trailing
 			// empty/aborted assistant stop must NOT revive the agent loop. The
 			// `#yieldTerminationPending` sticky flag clears on the next `prompt()`.
-			if (yieldOnThisMessage || this.#yieldTerminationPending) {
+			if (successfulYieldMessage || this.#yieldTerminationPending) {
 				this.#lastSuccessfulYieldToolCallId = undefined;
-				if (yieldOnThisMessage && activeGoal) {
-					maintenanceRoute("successful-yield-active-goal-checkCompaction");
-					const compactionTask = this.#checkCompaction(msg);
+				if (successfulYieldMessage && activeGoal) {
+					maintenanceRoute(
+						yieldOnThisMessage
+							? "successful-yield-active-goal-checkCompaction"
+							: "post-yield-trailing-stop-active-goal-checkCompaction",
+					);
+					const compactionTask = this.#checkCompaction(successfulYieldMessage);
 					this.#trackPostPromptTask(compactionTask);
 					await compactionTask;
-				} else if (yieldOnThisMessage) {
+				} else if (successfulYieldMessage) {
 					maintenanceRoute("successful-yield-no-active-goal");
 				} else {
 					maintenanceRoute("post-yield-trailing-stop-suppressed");
@@ -5074,13 +5102,42 @@ export class AgentSession {
 		this.#lastAppliedToolSignature = this.#computeAppliedToolSignature(activeToolNames, activeTools);
 	}
 
+	async #buildContextMapForAgentStart(promptText: string): Promise<string | undefined> {
+		if (!this.#contextMapEnabled) return undefined;
+		if (!hasNonWhitespace(promptText)) return undefined;
+
+		try {
+			const contextMap = await buildContextMap({
+				cwd: this.sessionManager.getCwd(),
+				budgetTokens: this.#contextMapBudgetTokens,
+				userPrompt: promptText,
+				mentionedFiles: extractFileMentions(promptText),
+			});
+			return contextMap.rendered.trim() ? contextMap.rendered : undefined;
+		} catch (err) {
+			logger.debug("Context Map build failed", { error: String(err) });
+			return undefined;
+		}
+	}
+
+	#appendContextMapPrompt(systemPrompt: string[], contextMapPrompt: string | undefined): string[] {
+		return contextMapPrompt ? [...systemPrompt, contextMapPrompt] : systemPrompt;
+	}
+
+	#hasContextMapPrompt(systemPrompt: string[]): boolean {
+		const lastPrompt = systemPrompt[systemPrompt.length - 1];
+		return lastPrompt?.startsWith("<context-map") === true;
+	}
+
 	async #buildSystemPromptForAgentStart(promptText: string): Promise<string[]> {
+		const contextMapPrompt = await this.#buildContextMapForAgentStart(promptText);
 		const backend = await resolveMemoryBackend(this.settings);
-		if (!backend.beforeAgentStartPrompt) return this.#baseSystemPrompt;
+		if (!backend.beforeAgentStartPrompt)
+			return this.#appendContextMapPrompt(this.#baseSystemPrompt, contextMapPrompt);
 
 		try {
 			const injected = await backend.beforeAgentStartPrompt(this, promptText);
-			if (!injected) return this.#baseSystemPrompt;
+			if (!injected) return this.#appendContextMapPrompt(this.#baseSystemPrompt, contextMapPrompt);
 
 			const previousBaseSystemPrompt = this.#baseSystemPrompt;
 			try {
@@ -5096,20 +5153,20 @@ export class AgentSession {
 				this.#baseSystemPrompt.length !== previousBaseSystemPrompt.length ||
 				this.#baseSystemPrompt.some((part, index) => part !== previousBaseSystemPrompt[index])
 			) {
-				return this.#baseSystemPrompt;
+				return this.#appendContextMapPrompt(this.#baseSystemPrompt, contextMapPrompt);
 			}
 
 			this.#baseSystemPromptBeforeMemoryPromotion ??= previousBaseSystemPrompt;
 			const stablePrompt = [...previousBaseSystemPrompt, injected];
 			this.#baseSystemPrompt = stablePrompt;
 			this.agent.setSystemPrompt(stablePrompt);
-			return stablePrompt;
+			return this.#appendContextMapPrompt(stablePrompt, contextMapPrompt);
 		} catch (err) {
 			logger.debug("Memory backend beforeAgentStartPrompt failed", {
 				backend: backend.id,
 				error: String(err),
 			});
-			return this.#baseSystemPrompt;
+			return this.#appendContextMapPrompt(this.#baseSystemPrompt, contextMapPrompt);
 		}
 	}
 
@@ -6055,6 +6112,7 @@ export class AgentSession {
 	): Promise<void> {
 		this.#beginInFlight();
 		const generation = this.#promptGeneration;
+		let restoreBaseSystemPromptAfterTurn = false;
 		try {
 			// Flush any pending bash messages before the new prompt
 			this.#flushPendingBashMessages();
@@ -6146,6 +6204,7 @@ export class AgentSession {
 			}
 
 			const beforeAgentStartSystemPrompt = await this.#buildSystemPromptForAgentStart(expandedText);
+			restoreBaseSystemPromptAfterTurn = this.#hasContextMapPrompt(beforeAgentStartSystemPrompt);
 
 			// Emit before_agent_start extension event
 			if (this.#extensionRunner) {
@@ -6226,6 +6285,9 @@ export class AgentSession {
 				await this.#waitForPostPromptRecovery(generation);
 			}
 		} finally {
+			if (restoreBaseSystemPromptAfterTurn) {
+				this.agent.setSystemPrompt(this.#baseSystemPrompt);
+			}
 			this.#endInFlight();
 		}
 	}
@@ -6853,7 +6915,12 @@ export class AgentSession {
 	 * the transcript can distinguish a deliberate user interrupt from an opaque
 	 * abort. Omit it for internal/lifecycle aborts.
 	 */
-	async abort(options?: { goalReason?: "interrupted" | "internal"; reason?: string }): Promise<void> {
+	async abort(options?: {
+		goalReason?: "interrupted" | "internal";
+		reason?: string;
+		/** Internal `/compact` startup keeps the manual-compaction marker alive while aborting the active turn. */
+		preserveCompaction?: boolean;
+	}): Promise<void> {
 		const userInterrupt = options?.reason === USER_INTERRUPT_LABEL;
 		if (userInterrupt) this.#advisorAutoResumeSuppressed = true;
 		// Pull advisor concerns out of the steer/follow-up queues before any await so
@@ -6868,7 +6935,17 @@ export class AgentSession {
 			this.abortRetry();
 			this.#promptGeneration++;
 			this.#scheduledHiddenNextTurnGeneration = undefined;
-			this.abortCompaction();
+			if (options?.preserveCompaction) {
+				// Manual `/compact` installed its own #compactionAbortController before
+				// this internal abort and must keep it alive (that marker is what makes
+				// isCompacting report true during startup). Any in-flight
+				// auto-compaction MUST still be cancelled, though: otherwise a
+				// background maintenance pass races the manual run and both
+				// appendCompaction/replaceMessages, double-rewriting session history.
+				this.#autoCompactionAbortController?.abort();
+			} else {
+				this.abortCompaction();
+			}
 			this.abortHandoff();
 			this.abortBash();
 			this.abortEval();
@@ -7841,12 +7918,12 @@ export class AgentSession {
 		if (compactMode?.rejectsFocus && customInstructions) {
 			throw new Error(`/compact ${compactMode.name} does not take focus instructions.`);
 		}
-		this.#disconnectFromAgent();
-		await this.abort({ goalReason: "internal" });
 		const compactionAbortController = new AbortController();
 		this.#compactionAbortController = compactionAbortController;
 
 		try {
+			this.#disconnectFromAgent();
+			await this.abort({ goalReason: "internal", preserveCompaction: true });
 			if (!this.model) {
 				throw new Error("No model selected");
 			}
@@ -8631,14 +8708,28 @@ export class AgentSession {
 		}
 		return COMPACTION_CHECK_NONE;
 	}
-	#assistantEndedWithSuccessfulYield(assistantMessage: AssistantMessage): boolean {
-		const toolCallId = this.#lastSuccessfulYieldToolCallId;
-		if (!toolCallId) return false;
+	#assistantMessageHasSuccessfulYieldToolCall(assistantMessage: AssistantMessage, toolCallId: string): boolean {
 		const lastToolCall = assistantMessage.content
 			.slice()
 			.reverse()
 			.find((content): content is ToolCall => content.type === "toolCall");
 		return lastToolCall?.name === "yield" && lastToolCall.id === toolCallId;
+	}
+
+	#assistantEndedWithSuccessfulYield(assistantMessage: AssistantMessage): boolean {
+		const toolCallId = this.#lastSuccessfulYieldToolCallId;
+		return toolCallId ? this.#assistantMessageHasSuccessfulYieldToolCall(assistantMessage, toolCallId) : false;
+	}
+
+	#findSuccessfulYieldAssistantMessage(messages: readonly AgentMessage[]): AssistantMessage | undefined {
+		const toolCallId = this.#lastSuccessfulYieldToolCallId;
+		if (!toolCallId) return undefined;
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const message = messages[i];
+			if (message.role !== "assistant") continue;
+			if (this.#assistantMessageHasSuccessfulYieldToolCall(message, toolCallId)) return message;
+		}
+		return undefined;
 	}
 
 	async #handleEmptyAssistantStop(assistantMessage: AssistantMessage): Promise<boolean> {
@@ -10659,7 +10750,16 @@ export class AgentSession {
 	#getRetryFallbackChains(): RetryFallbackChains {
 		const configuredChains = this.settings.get("retry.fallbackChains");
 		if (!configuredChains || typeof configuredChains !== "object") return {};
-		return configuredChains as RetryFallbackChains;
+		const chains: RetryFallbackChains = { ...(configuredChains as RetryFallbackChains) };
+		const defaultChain = chains.default;
+		if (Array.isArray(defaultChain)) {
+			for (const role of Object.keys(this.settings.getModelRoles())) {
+				if (role !== "default" && chains[role] === undefined) {
+					chains[role] = defaultChain;
+				}
+			}
+		}
+		return chains;
 	}
 
 	#validateRetryFallbackChains(): void {
