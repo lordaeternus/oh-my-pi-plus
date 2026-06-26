@@ -1,3 +1,5 @@
+#![allow(warnings)]
+#![allow(clippy::all, clippy::pedantic, clippy::nursery, dead_code)]
 // Copyright 2017 Google Inc.
 //
 // Use of this source code is governed by a MIT-style
