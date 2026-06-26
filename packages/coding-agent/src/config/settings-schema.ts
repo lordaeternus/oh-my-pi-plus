@@ -420,7 +420,7 @@ export const SETTINGS_SCHEMA = {
 				{
 					value: "risk-only",
 					label: "Risk only",
-					description: "Review only after edits, failed tools, or other risky activity.",
+					description: "Review only after edits or failed tools.",
 				},
 				{
 					value: "manual",

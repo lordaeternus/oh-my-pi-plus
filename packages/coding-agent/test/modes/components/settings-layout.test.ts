@@ -76,4 +76,12 @@ describe("settings layout", () => {
 			expect(def.condition?.()).toBe(true);
 		}
 	});
+
+	it("describes risk-only advisor mode as edits or failed tools", () => {
+		const advisorMode = SETTINGS_SCHEMA["advisor.mode"];
+		const option = advisorMode.ui.options.find(option => option.value === "risk-only");
+
+		expect(option?.description).toContain("edits or failed tools");
+		expect(option?.description).not.toContain("other risky activity");
+	});
 });

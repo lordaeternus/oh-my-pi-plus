@@ -72,6 +72,7 @@
       "version": "16.1.22",
       "bin": {
         "omp": "src/cli.ts",
+        "omp-plus": "src/cli.ts",
       },
       "dependencies": {
         "@agentclientprotocol/sdk": "catalog:",

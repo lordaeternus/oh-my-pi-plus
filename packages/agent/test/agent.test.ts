@@ -157,7 +157,7 @@ describe("Agent", () => {
 		expect(lastMessage.errorMessage).toBe(errorText);
 	});
 
-	it("prompt() keeps unrelated provider stream failures out of the assistant lifecycle", async () => {
+	it("prompt() emits assistant error lifecycle for generic provider stream failures", async () => {
 		const mock = createMockModel({ responses: [] });
 		const errorText = "connection reset";
 		const agent = new Agent({
@@ -174,17 +174,28 @@ describe("Agent", () => {
 		await agent.prompt("trigger");
 		unsubscribe();
 
-		expect(events.some(event => event.type === "message_start" && event.message.role === "assistant")).toBe(false);
-		expect(events.some(event => event.type === "message_end" && event.message.role === "assistant")).toBe(false);
+		const assistantStarts = events.filter(
+			event => event.type === "message_start" && event.message.role === "assistant",
+		);
+		const assistantEnds = events.filter(event => event.type === "message_end" && event.message.role === "assistant");
+		const turnEnds = events.filter(event => event.type === "turn_end" && event.message.role === "assistant");
+
+		expect(assistantStarts).toHaveLength(1);
+		expect(assistantEnds).toHaveLength(1);
+		expect(turnEnds).toHaveLength(1);
+
+		const assistantEnd = assistantEnds[0];
+		if (assistantEnd?.type !== "message_end" || assistantEnd.message.role !== "assistant") {
+			throw new Error("assistant message_end not emitted");
+		}
+		expect(assistantEnd.message.stopReason).toBe("error");
+		expect(assistantEnd.message.errorMessage).toBe(errorText);
+
 		const agentEnd = events.find(event => event.type === "agent_end");
 		if (agentEnd?.type !== "agent_end") {
 			throw new Error("agent_end not emitted");
 		}
-		const errorMessage = agentEnd.messages.find(message => message.role === "assistant");
-		if (errorMessage?.role !== "assistant") {
-			throw new Error("assistant error was not included in agent_end");
-		}
-		expect(errorMessage.errorMessage).toBe(errorText);
+		expect(agentEnd.messages.at(-1)).toBe(assistantEnd.message);
 	});
 
 	it("prompt() finalizes an existing assistant stream for Anthropic output-blocked stream errors", async () => {

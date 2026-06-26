@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import * as path from "node:path";
-import { Agent } from "@oh-my-pi/pi-agent-core";
+import { Agent, type AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { Model } from "@oh-my-pi/pi-ai";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
@@ -98,6 +98,34 @@ describe("AgentSession advisor toggle", () => {
 		expect(customSession.isAdvisorActive()).toBe(true);
 		expect(customSession.isAdvisorEnabled()).toBe(true);
 		expect(customSession.settings.get("advisor.enabled")).toBe(false);
+	});
+
+	it("manual review is accepted after enabling mid-session", async () => {
+		session.settings.setModelRole("advisor", "anthropic/claude-sonnet-4-5");
+		session.agent.appendMessage({ role: "user", content: "message before advisor enabled", timestamp: 1 });
+		session.agent.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "answer before advisor enabled" }],
+			api: "mock",
+			provider: "mock",
+			model: "mock-advisor-primary",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: 2,
+		} satisfies AgentMessage);
+
+		const active = session.setAdvisorEnabled(true);
+		const queued = await session.requestAdvisorReview();
+
+		expect(active).toBe(true);
+		expect(queued).toBe(true);
 	});
 
 	it("toggle disables the advisor and runtime", () => {

@@ -1843,7 +1843,9 @@ export class AgentSession {
 		const shouldRun = shouldRunAdvisorReview(mode, reason, this.#advisorRiskPending);
 		if (!shouldRun) return false;
 
-		this.#advisorRuntime.onTurnEnd(messages);
+		const queued =
+			reason === "manual" ? this.#advisorRuntime.reviewAll(messages) : this.#advisorRuntime.onTurnEnd(messages);
+		if (!queued) return false;
 		this.#advisorRiskPending = false;
 
 		const syncBacklog = this.settings.get("advisor.syncBacklog");

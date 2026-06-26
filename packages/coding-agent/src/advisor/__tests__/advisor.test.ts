@@ -388,6 +388,60 @@ describe("advisor", () => {
 			};
 		}
 
+		it("reports false when a delta review has no new transcript", () => {
+			const promptInputs: string[] = [];
+			const agent = makeAgent(promptInputs);
+			const messages: AgentMessage[] = [{ role: "user", content: "first", timestamp: 1 } as AgentMessage];
+			const host: AdvisorRuntimeHost = {
+				snapshotMessages: () => messages,
+				enqueueAdvice: () => {},
+			};
+			const runtime = new AdvisorRuntime(agent, host);
+
+			expect(runtime.onTurnEnd(messages)).toBe(true);
+			expect(runtime.onTurnEnd(messages)).toBe(false);
+		});
+
+		it("reports true when a later delta is queued", () => {
+			const promptInputs: string[] = [];
+			const agent = makeAgent(promptInputs);
+			const messages: AgentMessage[] = [{ role: "user", content: "first", timestamp: 1 } as AgentMessage];
+			const host: AdvisorRuntimeHost = {
+				snapshotMessages: () => messages,
+				enqueueAdvice: () => {},
+			};
+			const runtime = new AdvisorRuntime(agent, host);
+
+			expect(runtime.onTurnEnd(messages)).toBe(true);
+			messages.push({
+				role: "assistant",
+				content: [{ type: "text", text: "second" }],
+				timestamp: 2,
+			} as AgentMessage);
+			expect(runtime.onTurnEnd(messages)).toBe(true);
+		});
+
+		it("manual full review sends the current transcript after seedToCurrent", async () => {
+			const promptInputs: string[] = [];
+			const agent = makeAgent(promptInputs);
+			const messages: AgentMessage[] = [
+				{ role: "user", content: "before enabling", timestamp: 1 } as AgentMessage,
+				{ role: "assistant", content: [{ type: "text", text: "existing answer" }], timestamp: 2 } as AgentMessage,
+			];
+			const host: AdvisorRuntimeHost = {
+				snapshotMessages: () => messages,
+				enqueueAdvice: () => {},
+			};
+			const runtime = new AdvisorRuntime(agent, host);
+			runtime.seedTo(messages.length);
+
+			expect(runtime.reviewAll(messages)).toBe(true);
+			await Promise.resolve();
+
+			expect(promptInputs).toHaveLength(1);
+			expect(promptInputs[0]).toContain("before enabling");
+			expect(promptInputs[0]).toContain("existing answer");
+		});
 		it("coalesces multiple onTurnEnd calls while a prompt is in-flight", async () => {
 			const promptInputs: string[] = [];
 			const { promise: firstPromptPromise, resolve: finishFirstPrompt } = Promise.withResolvers<void>();

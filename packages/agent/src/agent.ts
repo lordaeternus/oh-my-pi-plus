@@ -1265,22 +1265,16 @@ export class Agent {
 							timestamp: Date.now(),
 						};
 
-			if (shouldEmitVisibleOutputBlockedError) {
-				if (!hadAssistantStart) {
-					this.#state.streamMessage = errorMsg;
-					this.#emit({ type: "message_start", message: errorMsg });
-				}
-				this.#state.streamMessage = null;
-				this.appendMessage(errorMsg);
-				this.#state.error = errorMessage;
-				this.#emit({ type: "message_end", message: errorMsg });
-				this.#emit({ type: "turn_end", message: errorMsg, toolResults: [] });
-				this.#emit({ type: "agent_end", messages: [errorMsg] });
-			} else {
-				this.appendMessage(errorMsg);
-				this.#state.error = errorMessage;
-				this.#emit({ type: "agent_end", messages: [errorMsg] });
-			}
+if (!hadAssistantStart) {
+ this.#state.streamMessage = errorMsg;
+ this.#emit({ type: "message_start", message: errorMsg });
+}
+this.#state.streamMessage = null;
+this.appendMessage(errorMsg);
+this.#state.error = errorMessage;
+this.#emit({ type: "message_end", message: errorMsg });
+this.#emit({ type: "turn_end", message: errorMsg, toolResults: [] });
+this.#emit({ type: "agent_end", messages: [errorMsg] });
 		} finally {
 			this.#state.isStreaming = false;
 			this.#state.streamMessage = null;

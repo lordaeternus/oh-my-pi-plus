@@ -80,17 +80,36 @@ export class AdvisorRuntime {
 		return this.#backlog;
 	}
 
-	onTurnEnd(messages?: AgentMessage[]): void {
-		if (this.disposed) return;
+	onTurnEnd(messages?: AgentMessage[]): boolean {
+		if (this.disposed) return false;
 		const all = messages ?? this.host.snapshotMessages();
 		this.#latestMessages = all;
 		const render = this.#renderDelta(all);
-		if (render) {
-			this.#pending.push({ text: render, turns: 1 });
-			this.#backlog++;
-			this.#notifyWaiters();
-			void this.#drain();
+		if (!render) return false;
+		this.#pending.push({ text: render, turns: 1 });
+		this.#backlog++;
+		this.#notifyWaiters();
+		void this.#drain();
+		return true;
+	}
+
+	reviewAll(messages?: AgentMessage[]): boolean {
+		if (this.disposed) return false;
+		const all = messages ?? this.host.snapshotMessages();
+		this.#latestMessages = all;
+		const previousLastCount = this.#lastCount;
+		this.#lastCount = 0;
+		this.#seenContext.clear();
+		const render = this.#renderDelta(all);
+		if (!render) {
+			this.#lastCount = previousLastCount;
+			return false;
 		}
+		this.#pending.push({ text: render, turns: 1 });
+		this.#backlog++;
+		this.#notifyWaiters();
+		void this.#drain();
+		return true;
 	}
 
 	waitForCatchup(maxMs: number, threshold: number, signal?: AbortSignal): Promise<void> {
