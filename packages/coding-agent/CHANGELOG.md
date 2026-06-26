@@ -8,6 +8,7 @@
 - Added a transient TUI footer status while the advisor is actively reviewing a turn.
 
 ### Fixed
+- Fixed advisor `concern` notes interrupting the primary agent like `blocker`; concerns now ride the non-interrupting aside queue and only blockers steer/interrupt the active run.
 
 - Fixed the shutdown resume hint to use `omp-plus --resume` instead of `omp --resume`.
 - Fixed Windows `cmd.exe` MCP wrapping failing to launch when spawned through Bun by adding `windowsVerbatimArguments: true` to prevent automatic double-quoting and escaping of arguments on Windows.

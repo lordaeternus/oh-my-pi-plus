@@ -255,11 +255,22 @@ describe("advisor", () => {
 	});
 
 	describe("advice delivery policy", () => {
-		it("interrupts on concern and blocker, queues a plain nit", () => {
+		it("interrupts only on blocker, keeps concern as advisory aside", () => {
 			expect(isInterruptingSeverity("blocker")).toBe(true);
-			expect(isInterruptingSeverity("concern")).toBe(true);
+			expect(isInterruptingSeverity("concern")).toBe(false);
 			expect(isInterruptingSeverity("nit")).toBe(false);
 			expect(isInterruptingSeverity(undefined)).toBe(false);
+		});
+
+		it("formats concern as advisory content, not a stop command", () => {
+			const content = formatAdvisorBatchContent([
+				{ note: "Check whether the generated model list still needs the missing id.", severity: "concern" },
+			]);
+
+			expect(content).toContain('severity="concern"');
+			expect(content).toContain('guidance="weigh, don\'t blindly obey"');
+			expect(content).not.toContain("Stop");
+			expect(content).not.toContain("pause");
 		});
 
 		it("keeps the interrupt-immune turn fence half-open for the configured window", () => {
@@ -1130,25 +1141,36 @@ describe("advisor", () => {
 			).toBe("aside");
 		});
 
-		it("steers concern/blocker when no user interrupt is in effect", () => {
-			for (const severity of ["concern", "blocker"] as const) {
-				for (const streaming of [true, false]) {
-					expect(
-						resolveAdvisorDeliveryChannel({
-							severity,
-							autoResumeSuppressed: false,
-							streaming,
-							aborting: false,
-						}),
-					).toBe("steer");
-				}
+		it("steers blocker when no user interrupt is in effect", () => {
+			for (const streaming of [true, false]) {
+				expect(
+					resolveAdvisorDeliveryChannel({
+						severity: "blocker",
+						autoResumeSuppressed: false,
+						streaming,
+						aborting: false,
+					}),
+				).toBe("steer");
+			}
+		});
+
+		it("routes concern through the aside queue so it cannot stop the main flow", () => {
+			for (const streaming of [true, false]) {
+				expect(
+					resolveAdvisorDeliveryChannel({
+						severity: "concern",
+						autoResumeSuppressed: false,
+						streaming,
+						aborting: false,
+					}),
+				).toBe("aside");
 			}
 		});
 
 		it("routes interrupting notes to the aside queue during immune turns without overriding preservation", () => {
 			expect(
 				resolveAdvisorDeliveryChannel({
-					severity: "concern",
+					severity: "blocker",
 					autoResumeSuppressed: false,
 					streaming: true,
 					aborting: false,
@@ -1165,17 +1187,15 @@ describe("advisor", () => {
 				}),
 			).toBe("preserve");
 		});
-		it("preserves an interrupting note while suppressed AND idle (no auto-resume of a stopped run)", () => {
-			for (const severity of ["concern", "blocker"] as const) {
-				expect(
-					resolveAdvisorDeliveryChannel({
-						severity,
-						autoResumeSuppressed: true,
-						streaming: false,
-						aborting: false,
-					}),
-				).toBe("preserve");
-			}
+		it("preserves a blocker while suppressed AND idle (no auto-resume of a stopped run)", () => {
+			expect(
+				resolveAdvisorDeliveryChannel({
+					severity: "blocker",
+					autoResumeSuppressed: true,
+					streaming: false,
+					aborting: false,
+				}),
+			).toBe("preserve");
 		});
 
 		it("preserves an interrupting note while suppressed AND aborting, even though the turn still reports streaming", () => {
@@ -1191,17 +1211,15 @@ describe("advisor", () => {
 			).toBe("preserve");
 		});
 
-		it("steers an interrupting note while suppressed once a turn is streaming again and not aborting (the fix)", () => {
-			for (const severity of ["concern", "blocker"] as const) {
-				expect(
-					resolveAdvisorDeliveryChannel({
-						severity,
-						autoResumeSuppressed: true,
-						streaming: true,
-						aborting: false,
-					}),
-				).toBe("steer");
-			}
+		it("steers a blocker while suppressed once a turn is streaming again and not aborting (the fix)", () => {
+			expect(
+				resolveAdvisorDeliveryChannel({
+					severity: "blocker",
+					autoResumeSuppressed: true,
+					streaming: true,
+					aborting: false,
+				}),
+			).toBe("steer");
 		});
 	});
 });

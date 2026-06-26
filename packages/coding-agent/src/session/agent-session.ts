@@ -1074,9 +1074,9 @@ function isAdvisorCard(message: AgentMessage): message is CustomMessage {
  * A queued message the user can restore to the editor / pull back as a draft.
  * Only genuinely user-authored messages qualify: plain user turns, or custom
  * messages explicitly attributed to the user (e.g. `/skill` invocations).
- * Agent-authored queued cards — advisor concern/blocker notes, IRC asides,
- * extension notices, hidden goal/plan/budget steers — ride the same
- * steer/follow-up queues but must never be dumped into the editor on Esc/Alt+Up.
+ * Agent-authored queued cards — advisor notes, IRC asides, extension notices,
+ * hidden goal/plan/budget steers — ride the same steer/follow-up queues but
+ * must never be dumped into the editor on Esc/Alt+Up.
  */
 function isUserQueuedMessage(message: AgentMessage): boolean {
 	if (message.role === "user") return true;
@@ -1160,8 +1160,8 @@ export class AgentSession {
 	#scheduledHiddenNextTurnGeneration: number | undefined = undefined;
 	#queuedMessageDrainScheduled = false;
 	/** Latched true when the user deliberately interrupts (USER_INTERRUPT_LABEL);
-	 *  suppresses advisor concern/blocker auto-resume until the user next resumes.
-	 *  Advisor advice is still recorded into the transcript, just not auto-run. */
+	 * suppresses advisor blocker auto-resume until the user next resumes. Advisor
+	 * advice is still recorded into the transcript, just not auto-run. */
 	#advisorAutoResumeSuppressed = false;
 	#advisorPrimaryTurnsCompleted = 0;
 	#advisorInterruptImmuneTurnStart: number | undefined;
@@ -1443,7 +1443,7 @@ export class AgentSession {
 	 *  queue was consumed normally or a new turn already started. */
 	#drainStrandedQueuedMessages(): void {
 		if (this.#abortInProgress) return;
-		// A concern steered into a resumed streaming run after a user interrupt can
+		// A blocker steered into a resumed streaming run after a user interrupt can
 		// strand at the turn tail (steered past the loop's final boundary poll). While
 		// that interrupt's suppression is still in effect, reclaim such advisor steers
 		// as visible advice once idle — mirroring abort's #extractQueuedAdvisorCards —
@@ -1509,11 +1509,11 @@ export class AgentSession {
 			});
 	}
 
-	/** Remove advisor concern/blocker cards from the agent-core steer/follow-up
-	 *  queues and return them. Used on a deliberate user interrupt so the post-abort
-	 *  stranded-message drain cannot auto-resume the run on an advisor card that was
-	 *  steered in just before the user stopped; real user follow-ups stay queued.
-	 *  Synchronous and await-free so it runs before the abort path polls the queue. */
+	/** Remove advisor blocker cards from the agent-core steer/follow-up queues and
+	 * return them. Used on a deliberate user interrupt so the post-abort stranded-message
+	 * drain cannot auto-resume the run on an advisor card that was steered in just
+	 * before the user stopped; real user follow-ups stay queued. Synchronous and
+	 * await-free so it runs before the abort path polls the queue. */
 	#extractQueuedAdvisorCards(): CustomMessage[] {
 		const steering = this.agent.peekSteeringQueue();
 		const followUp = this.agent.peekFollowUpQueue();
@@ -1782,7 +1782,7 @@ export class AgentSession {
 
 	// The next primary turn number starts the immune-turn window. While the
 	// interrupting steer is still in flight, completedTurns is lower than this
-	// start, so duplicate concern/blocker advice is also downgraded.
+	// start, so duplicate blocker advice is also downgraded.
 	#recordAdvisorInterruptDelivered(): void {
 		this.#advisorInterruptImmuneTurnStart = this.#advisorPrimaryTurnsCompleted + 1;
 	}
@@ -1871,17 +1871,17 @@ export class AgentSession {
 			return false;
 		}
 
-		// Concern and blocker interrupt the running agent through the steering
-		// channel (aborting in-flight tools at the next steering boundary); when the
-		// loop has already yielded, triggerTurn resumes it so the advice is acted on
-		// immediately rather than waiting for the next user prompt. After a deliberate
-		// user interrupt the auto-resume is suppressed — but only while the agent is
-		// idle or still tearing the interrupted turn down: a concern is then recorded
-		// as a visible card and re-enters context when the user resumes. Once a turn
-		// is streaming again (a resume the user already drove) it is steered in live,
-		// since steering an active run auto-resumes nothing; parking it there would
-		// strand the advice and dump the backlog as one burst at the next prompt. A
-		// plain nit always rides the non-interrupting YieldQueue aside.
+		// Blockers interrupt the running agent through the steering channel (aborting
+		// in-flight tools at the next steering boundary); when the loop has already
+		// yielded, triggerTurn resumes it so the advice is acted on immediately rather
+		// than waiting for the next user prompt. After a deliberate user interrupt the
+		// auto-resume is suppressed — but only while the agent is idle or still tearing
+		// the interrupted turn down: a blocker is then recorded as a visible card and
+		// re-enters context when the user resumes. Once a turn is streaming again (a
+		// resume the user already drove) it is steered in live, since steering an
+		// active run auto-resumes nothing; parking it there would strand the advice
+		// and dump the backlog as one burst at the next prompt. Nits and concerns
+		// always ride the non-interrupting YieldQueue aside.
 		const enqueueAdvice = (note: string, severity?: AdvisorSeverity) => {
 			const interrupting = isInterruptingSeverity(severity);
 			const channel = resolveAdvisorDeliveryChannel({
@@ -6930,7 +6930,7 @@ export class AgentSession {
 	}): Promise<void> {
 		const userInterrupt = options?.reason === USER_INTERRUPT_LABEL;
 		if (userInterrupt) this.#advisorAutoResumeSuppressed = true;
-		// Pull advisor concerns out of the steer/follow-up queues before any await so
+		// Pull advisor blockers out of the steer/follow-up queues before any await so
 		// the post-abort stranded-message drain can't auto-resume the run on them.
 		// They are re-recorded as visible advice once the agent settles (below).
 		const strandedAdvisorCards = userInterrupt ? this.#extractQueuedAdvisorCards() : [];
@@ -6974,7 +6974,7 @@ export class AgentSession {
 			if (this.#toolChoiceQueue.hasInFlight) {
 				this.#toolChoiceQueue.reject("aborted");
 			}
-			// Re-record advisor concerns the interrupt would otherwise strand, as
+			// Re-record advisor blockers the interrupt would otherwise strand, as
 			// visible/persisted advice without triggering a turn (the agent is idle
 			// now): cards steered into the queue before the user stopped, plus any
 			// that arrived via enqueueAdvice mid-abort and were parked hidden in

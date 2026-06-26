@@ -1,21 +1,22 @@
 /**
  * Contract: after a deliberate user interrupt the advisor must not auto-resume
- * the run, but its concerns must survive as visible, persisted transcript cards
- * so they re-enter context when the user resumes. Internal (non-user) aborts keep
- * the prior behavior — advisor advice stays in the auto-continue path.
+ * the run, but interrupting blocker cards must survive as visible, persisted
+ * transcript cards so they re-enter context when the user resumes. Internal
+ * (non-user) aborts keep the prior behavior — advisor advice stays in the
+ * auto-continue path.
  *
  * Five seams:
- *  1. A concern already steered into the agent queue when the user hits Esc is
- *     pulled out of the post-abort auto-continue path and re-recorded as advice.
- *  2. A concern parked hidden (#pendingNextTurnMessages) by the suppressed
- *     delivery while the turn is still tearing down is reclaimed once idle.
- *  3. A non-user abort does NOT suppress: a steered advisor card still drives the
- *     auto-continue, so the gate is keyed to the user interrupt, not any abort.
- *  4. A user message queued (as a steer) before the interrupt is delivered on
- *     resume even though the preserved advisor card is the trailing message.
- *  5. The same queued as a follow-up: continuing from the preserved advisor card
- *     (which converts to `developer`) would send an invalid provider tail, so the
- *     follow-up stays queued for the next explicit resume rather than auto-running.
+ * 1. A blocker already steered into the agent queue when the user hits Esc is
+ * pulled out of the post-abort auto-continue path and re-recorded as advice.
+ * 2. A blocker parked hidden (#pendingNextTurnMessages) by the suppressed
+ * delivery while the turn is still tearing down is reclaimed once idle.
+ * 3. A non-user abort does NOT suppress: a steered advisor card still drives the
+ * auto-continue, so the gate is keyed to the user interrupt, not any abort.
+ * 4. A user message queued (as a steer) before the interrupt is delivered on
+ * resume even though the preserved advisor card is the trailing message.
+ * 5. The same queued as a follow-up: continuing from the preserved advisor card
+ * (which converts to `developer`) would send an invalid provider tail, so the
+ * follow-up stays queued for the next explicit resume rather than auto-running.
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Agent, type AgentMessage } from "@oh-my-pi/pi-agent-core";
@@ -132,14 +133,14 @@ describe("AgentSession advisor auto-resume suppression", () => {
 		return persisted;
 	}
 
-	it("preserves an advisor concern steered before the user interrupt, without auto-resuming", async () => {
+	it("preserves an advisor blocker steered before the user interrupt, without auto-resuming", async () => {
 		const { session, sessionManager, mock, streamStarted } = await createParkedSession();
 		const persisted = capturePersistedAdvice(sessionManager);
 
 		const running = session.prompt("do the thing");
 		await streamStarted;
 
-		// Advisor raises an interrupting concern mid-run: it lands in the steering queue.
+		// Advisor raises an interrupting blocker mid-run: it lands in the steering queue.
 		await session.sendCustomMessage(advisorCard("breaks the build"), { deliverAs: "steer", triggerTurn: true });
 		expect(session.agent.peekSteeringQueue().some(isAdvisorCard)).toBe(true);
 
@@ -201,7 +202,7 @@ describe("AgentSession advisor auto-resume suppression", () => {
 
 	it("reclaims a stranded advisor steer on settle while suppressed, instead of auto-resuming the stopped run", async () => {
 		// Residual edge exposed once interrupting advice is steered (not parked) into a
-		// resumed streaming run: a concern can land in the steer queue past the loop's
+		// resumed streaming run: a blocker can land in the steer queue past the loop's
 		// final boundary poll and strand. The steer queue otherwise bypasses the
 		// suppression latch in #canAutoContinueForFollowUp, so the idle settle would
 		// auto-resume the run the user stopped. The settle drain must instead reclaim the
@@ -222,7 +223,7 @@ describe("AgentSession advisor auto-resume suppression", () => {
 		await running.catch(() => {});
 		expect(mock.calls.length).toBe(1);
 
-		// A concern strands in the steer queue (steered past the resumed turn's last poll).
+		// A blocker strands in the steer queue (steered past the resumed turn's last poll).
 		session.agent.steer({
 			role: "custom",
 			customType: ADVISOR_TYPE,
