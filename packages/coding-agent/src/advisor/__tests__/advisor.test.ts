@@ -418,8 +418,8 @@ describe("advisor", () => {
 			expect(promptInputs).toHaveLength(1);
 
 			finishFirstPrompt();
-			await Promise.resolve();
-			await Promise.resolve();
+			await Bun.sleep(0);
+			await Bun.sleep(0);
 			expect(promptInputs).toHaveLength(2);
 			expect(promptInputs[1]).toContain("second");
 		});
@@ -451,6 +451,38 @@ describe("advisor", () => {
 
 			finishPrompt();
 			await Bun.sleep(0);
+			expect(events).toEqual([true, false]);
+		});
+
+		it("aborts a hung advisor prompt and clears running status", async () => {
+			const events: boolean[] = [];
+			let aborts = 0;
+			const { promise: promptStarted, resolve: startPrompt } = Promise.withResolvers<void>();
+			const agent: AdvisorAgent = {
+				prompt: async () => {
+					startPrompt();
+					await new Promise(() => {});
+				},
+				abort: () => {
+					aborts++;
+				},
+				reset: () => {},
+				state: { messages: [] },
+			};
+			const messages: AgentMessage[] = [{ role: "user", content: "first", timestamp: 1 } as AgentMessage];
+			const host: AdvisorRuntimeHost = {
+				snapshotMessages: () => messages,
+				enqueueAdvice: () => {},
+				setRunning: running => events.push(running),
+			};
+			const runtime = new AdvisorRuntime(agent, host, 0, 1);
+
+			runtime.onTurnEnd(messages);
+			await promptStarted;
+			await Bun.sleep(5);
+
+			expect(aborts).toBe(1);
+			expect(runtime.backlog).toBe(0);
 			expect(events).toEqual([true, false]);
 		});
 
@@ -802,7 +834,7 @@ describe("advisor", () => {
 			runtime.reset();
 
 			runtime.onTurnEnd();
-			await Promise.resolve();
+			await Bun.sleep(0);
 			// The next turn replays the full post-compaction transcript, not just new tail.
 			expect(promptInputs).toHaveLength(2);
 			expect(promptInputs[1]).toContain("summary-bbb");
@@ -844,8 +876,8 @@ describe("advisor", () => {
 			shouldRePrime = true;
 			messages.push({ role: "user", content: "bbb", timestamp: 2 } as AgentMessage);
 			runtime.onTurnEnd(messages);
-			await Promise.resolve();
-			await Promise.resolve();
+			await Bun.sleep(0);
+			await Bun.sleep(0);
 
 			// The reset cleared history and prompted a full replay (so the batch contains both aaa and bbb)
 			expect(promptInputs).toHaveLength(2);

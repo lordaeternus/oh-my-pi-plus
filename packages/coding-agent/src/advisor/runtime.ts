@@ -73,6 +73,7 @@ export class AdvisorRuntime {
 		private readonly agent: AdvisorAgent,
 		private readonly host: AdvisorRuntimeHost,
 		private readonly retryDelayMs = 1000,
+		private readonly promptTimeoutMs = 120_000,
 	) {}
 
 	get backlog(): number {
@@ -280,7 +281,9 @@ export class AdvisorRuntime {
 
 				let success = false;
 				try {
-					await this.agent.prompt(batch);
+					await withAdvisorPromptTimeout(this.agent.prompt(batch), this.promptTimeoutMs, () =>
+						this.agent.abort("advisor prompt timeout"),
+					);
 					success = true;
 					this.#consecutiveFailures = 0;
 				} catch (err) {
@@ -289,19 +292,26 @@ export class AdvisorRuntime {
 					// (reset already cleared #pending and rewound the cursor) instead of
 					// requeuing it into the post-reset conversation.
 					if (this.#epoch !== epoch) continue;
-					logger.debug("advisor turn failed", { err: String(err) });
-					this.#consecutiveFailures++;
-					if (this.#consecutiveFailures >= 3) {
-						logger.warn("advisor failed consecutively 3 times; dropping backlog to prevent stall");
+					if (err instanceof AdvisorPromptTimeoutError) {
+						logger.warn("advisor prompt timed out; dropping batch", { timeoutMs: this.promptTimeoutMs });
 						this.#consecutiveFailures = 0;
-						// The dropped batch may carry primary-context we never delivered; drop
-						// the seen-state too so the next turn re-expands it instead of marking
-						// it "unchanged" against content the advisor never received.
 						this.#seenContext.clear();
 						success = true;
 					} else {
-						this.#pending.unshift({ text: batch, turns: finalTurns });
-						await Bun.sleep(this.retryDelayMs);
+						logger.debug("advisor turn failed", { err: String(err) });
+						this.#consecutiveFailures++;
+						if (this.#consecutiveFailures >= 3) {
+							logger.warn("advisor failed consecutively 3 times; dropping backlog to prevent stall");
+							this.#consecutiveFailures = 0;
+							// The dropped batch may carry primary-context we never delivered; drop
+							// the seen-state too so the next turn re-expands it instead of marking
+							// it "unchanged" against content the advisor never received.
+							this.#seenContext.clear();
+							success = true;
+						} else {
+							this.#pending.unshift({ text: batch, turns: finalTurns });
+							await Bun.sleep(this.retryDelayMs);
+						}
 					}
 				}
 
@@ -314,6 +324,29 @@ export class AdvisorRuntime {
 			this.host.setRunning?.(false);
 			this.#busy = false;
 		}
+	}
+}
+
+class AdvisorPromptTimeoutError extends Error {
+	constructor(timeoutMs: number) {
+		super(`Advisor prompt timed out after ${timeoutMs}ms`);
+		this.name = "AdvisorPromptTimeoutError";
+	}
+}
+
+async function withAdvisorPromptTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => void): Promise<T> {
+	if (timeoutMs <= 0) return promise;
+	const { promise: timeoutPromise, reject } = Promise.withResolvers<T>();
+	const timer = setTimeout(() => {
+		try {
+			onTimeout();
+		} catch {}
+		reject(new AdvisorPromptTimeoutError(timeoutMs));
+	}, timeoutMs);
+	try {
+		return await Promise.race([promise, timeoutPromise]);
+	} finally {
+		clearTimeout(timer);
 	}
 }
 
