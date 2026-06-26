@@ -363,6 +363,7 @@ export type AgentSessionEvent =
 	| { type: "todo_auto_clear" }
 	| { type: "irc_message"; message: CustomMessage }
 	| { type: "notice"; level: "info" | "warning" | "error"; message: string; source?: string }
+	| { type: "advisor_status"; running: boolean }
 	| {
 			type: "thinking_level_changed";
 			thinkingLevel: ThinkingLevel | undefined;
@@ -2002,6 +2003,7 @@ export class AgentSession {
 		this.#advisorRuntime = new AdvisorRuntime(advisorAgentFacade, {
 			snapshotMessages: () => this.agent.state.messages,
 			enqueueAdvice,
+			setRunning: running => this.#emit({ type: "advisor_status", running }),
 			maintainContext: incomingTokens => this.#maintainAdvisorContext(incomingTokens),
 			includeThinking: () => this.settings.get("advisor.includeThinking"),
 			obfuscator: this.#obfuscator,

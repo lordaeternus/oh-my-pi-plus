@@ -37,7 +37,6 @@ import {
 	visibleWidth,
 } from "@oh-my-pi/pi-tui";
 import {
-	APP_NAME,
 	adjustHsv,
 	formatNumber,
 	getProjectDir,
@@ -49,6 +48,7 @@ import {
 	setProjectDir,
 } from "@oh-my-pi/pi-utils";
 import chalk from "chalk";
+
 import { reset as resetCapabilities } from "../capability";
 import type { CollabGuestLink } from "../collab/guest";
 import type { CollabHost } from "../collab/host";
@@ -179,6 +179,12 @@ import type {
 	TodoPhase,
 } from "./types";
 import { UiHelpers } from "./utils/ui-helpers";
+
+const RESUME_HINT_BINARY = "omp-plus";
+
+export function formatResumeHint(sessionId: string): string {
+	return `Resume this session with ${RESUME_HINT_BINARY} --resume ${sessionId}`;
+}
 
 const HINT_SHIMMER_PALETTE: ShimmerPalette = {
 	low: "dim",
@@ -3197,7 +3203,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		const sessionId = this.sessionManager.getSessionId();
 		const sessionFile = this.sessionManager.getSessionFile();
 		if (sessionId && sessionFile) {
-			process.stderr.write(`\n${chalk.dim(`Resume this session with ${APP_NAME} --resume ${sessionId}`)}\n`);
+			process.stderr.write(`\n${chalk.dim(formatResumeHint(sessionId))}\n`);
 		}
 
 		await postmortem.quit(0);

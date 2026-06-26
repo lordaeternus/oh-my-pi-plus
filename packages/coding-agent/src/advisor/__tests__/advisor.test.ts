@@ -353,6 +353,36 @@ describe("advisor", () => {
 			expect(promptInputs[1]).toContain("second");
 		});
 
+		it("notifies the host while an advisor prompt is running", async () => {
+			const events: boolean[] = [];
+			const { promise: promptStarted, resolve: startPrompt } = Promise.withResolvers<void>();
+			const { promise: promptFinish, resolve: finishPrompt } = Promise.withResolvers<void>();
+			const agent: AdvisorAgent = {
+				prompt: async () => {
+					startPrompt();
+					await promptFinish;
+				},
+				abort: () => {},
+				reset: () => {},
+				state: { messages: [] },
+			};
+			const messages: AgentMessage[] = [{ role: "user", content: "first", timestamp: 1 } as AgentMessage];
+			const host: AdvisorRuntimeHost = {
+				snapshotMessages: () => messages,
+				enqueueAdvice: () => {},
+				setRunning: running => events.push(running),
+			};
+			const runtime = new AdvisorRuntime(agent, host);
+
+			runtime.onTurnEnd(messages);
+			await promptStarted;
+			expect(events).toEqual([true]);
+
+			finishPrompt();
+			await Bun.sleep(0);
+			expect(events).toEqual([true, false]);
+		});
+
 		it("budgets only the batch sent after async context maintenance", async () => {
 			const promptInputs: string[] = [];
 			const { promise: firstMaintainStarted, resolve: startFirstMaintain } = Promise.withResolvers<void>();

@@ -5,9 +5,11 @@
 ### Added
 
 - Added configurable advisor review modes (`advisor.mode`), `/advisor review` for queueing an immediate review, and `advisor.includeThinking` for omitting assistant thinking from advisor input.
+- Added a transient TUI footer status while the advisor is actively reviewing a turn.
 
 ### Fixed
 
+- Fixed the shutdown resume hint to use `omp-plus --resume` instead of `omp --resume`.
 - Fixed Windows `cmd.exe` MCP wrapping failing to launch when spawned through Bun by adding `windowsVerbatimArguments: true` to prevent automatic double-quoting and escaping of arguments on Windows.
 ## [16.1.20] - 2026-06-25
 

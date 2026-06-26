@@ -18,6 +18,8 @@ export interface AdvisorRuntimeHost {
 	snapshotMessages(): AgentMessage[];
 	/** Surface one advice note to the primary (enqueues into the session YieldQueue). */
 	enqueueAdvice(note: string, severity?: "nit" | "concern" | "blocker"): void;
+	/** Notify host UI when the advisor has queued work actively running. */
+	setRunning?(running: boolean): void;
 	/** Redact primary transcript bytes before they reach the advisor model. */
 	obfuscator?: SecretObfuscator;
 	/** Whether primary thinking blocks should be included in advisor deltas. */
@@ -231,6 +233,7 @@ export class AdvisorRuntime {
 	async #drain(): Promise<void> {
 		if (this.#busy) return;
 		this.#busy = true;
+		this.host.setRunning?.(true);
 		try {
 			while (!this.disposed && this.#pending.length) {
 				const popped = this.#pending.splice(0);
@@ -308,6 +311,7 @@ export class AdvisorRuntime {
 				}
 			}
 		} finally {
+			this.host.setRunning?.(false);
 			this.#busy = false;
 		}
 	}

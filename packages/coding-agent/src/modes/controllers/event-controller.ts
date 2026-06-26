@@ -117,6 +117,7 @@ export class EventController {
 			todo_auto_clear: e => this.#handleTodoAutoClear(e),
 			irc_message: e => this.#handleIrcMessage(e),
 			notice: e => this.#handleNotice(e),
+			advisor_status: e => this.#handleAdvisorStatus(e),
 			thinking_level_changed: async () => {
 				this.ctx.statusLine.invalidate();
 				this.ctx.updateEditorBorderColor();
@@ -432,6 +433,12 @@ export class EventController {
 		} else {
 			this.ctx.showStatus(message);
 		}
+	}
+
+	#handleAdvisorStatus(event: Extract<AgentSessionEvent, { type: "advisor_status" }>): Promise<void> {
+		this.ctx.statusLine.setHookStatus("advisor", event.running ? "Advisor analisando..." : undefined);
+		this.ctx.ui.requestRender();
+		return Promise.resolve();
 	}
 
 	/** A new turn interrupts any speech still queued/playing from the previous one. */

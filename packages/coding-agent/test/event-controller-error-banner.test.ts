@@ -71,8 +71,9 @@ function createFixture(streamingMessage?: AssistantMessage) {
 		isInitialized: true,
 		init: vi.fn(async () => {}),
 		ui: { requestRender: vi.fn(), requestComponentRender: vi.fn() },
-		statusLine: { invalidate: vi.fn() },
+		statusLine: { invalidate: vi.fn(), setHookStatus: vi.fn() },
 		updateEditorTopBorder: vi.fn(),
+		updateEditorBorderColor: vi.fn(),
 		ensureLoadingAnimation: vi.fn(),
 		statusContainer,
 		loadingAnimation: undefined,
@@ -93,6 +94,19 @@ function createFixture(streamingMessage?: AssistantMessage) {
 	const controller = new EventController(ctx);
 	return { controller, ctx, showPinnedError, clearPinnedError, streamingComponent };
 }
+
+describe("EventController advisor status", () => {
+	it("shows and clears the advisor running footer status", async () => {
+		const { controller, ctx } = createFixture();
+
+		await controller.handleEvent({ type: "advisor_status", running: true } as AgentSessionEvent);
+		await controller.handleEvent({ type: "advisor_status", running: false } as AgentSessionEvent);
+
+		expect(ctx.statusLine.setHookStatus).toHaveBeenNthCalledWith(1, "advisor", "Advisor analisando...");
+		expect(ctx.statusLine.setHookStatus).toHaveBeenNthCalledWith(2, "advisor", undefined);
+		expect(ctx.ui.requestRender).toHaveBeenCalled();
+	});
+});
 
 describe("EventController error banner", () => {
 	it("pins the provider error above the editor when an assistant turn ends on stopReason error", async () => {
