@@ -342,10 +342,12 @@ export class StdioTransport implements MCPTransport {
 			platform: process.platform,
 		});
 
-		// Spawn in a new session (detached → setsid) so the MCP process tree has
-		// no controlling terminal. Otherwise terminal job-control signals (Ctrl+Z
-		// SIGTSTP, background-read SIGTTIN) can stop stdio servers such as
-		// chrome-devtools-mcp and leave our read loop blocked on silent pipes.
+		// Spawn POSIX MCP servers in a new session (detached → setsid) so their
+		// process trees have no controlling terminal. Otherwise terminal job-control
+		// signals (Ctrl+Z SIGTSTP, background-read SIGTTIN) can stop stdio servers
+		// such as chrome-devtools-mcp and leave our read loop blocked on silent pipes.
+		// Do not detach on Windows: detached stdio subprocesses get visible console
+		// windows even when `windowsHide` is set.
 		this.#process = spawn({
 			cmd: spawnCommand.cmd,
 			cwd,
@@ -355,7 +357,7 @@ export class StdioTransport implements MCPTransport {
 			stderr: "pipe",
 			windowsHide: spawnCommand.windowsHide,
 			windowsVerbatimArguments: spawnCommand.windowsVerbatimArguments,
-			detached: true,
+			detached: process.platform !== "win32",
 		});
 
 		this.#connected = true;

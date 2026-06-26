@@ -20,9 +20,11 @@ import * as path from "node:path";
  *   group, so the kernel parks omp regardless of installed handlers and the
  *   parent shell sees the whole job stop even when omp runs behind a wrapper
  *   (`npx`, `pnpm exec`, `bunx`, …) or as one stage of a pipeline.
- * - MCP stdio servers spawn detached, so terminal job-control signals cannot
- *   stop their process trees and leave the JSONL read loop blocked on silent
- *   pipes — and so the pgid=0 suspend above doesn't reach them either.
+ * - On POSIX, MCP stdio servers spawn detached, so terminal job-control signals
+ *   cannot stop their process trees and leave the JSONL read loop blocked on
+ *   silent pipes — and so the pgid=0 suspend above doesn't reach them either.
+ *   On Windows, detaching stdio servers opens visible console windows, so the
+ *   transport must keep them hidden and attached.
  * The unit test in `input-controller-suspend.test.ts` covers the JS handler's
  * call shape; this file pins the runtime contract on the brush/MCP side so
  * refactors force a deliberate revisit instead of silently regressing behavior.
@@ -59,9 +61,10 @@ describe("issue #3461 — Ctrl+Z hangs after a command has been run", () => {
 		expect(src).toMatch(/process\.kill\(\s*0\s*,\s*["']SIGSTOP["']\s*\)/);
 	});
 
-	it("MCP stdio servers spawn detached so terminal job-control signals cannot stop them", async () => {
+	it("detaches MCP stdio servers only outside Windows", async () => {
 		const src = await Bun.file(mcpStdioTransport).text();
-		expect(src).toMatch(/detached:\s*true/);
+		expect(src).toMatch(/detached:\s*process\.platform !== ["']win32["']/);
 		expect(src).toContain("no controlling terminal");
+		expect(src).toContain("visible console");
 	});
 });
