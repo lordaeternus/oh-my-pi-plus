@@ -247,7 +247,7 @@ export async function generateTitleOnline(
 			return null;
 		}
 
-		const title = normalizeGeneratedTitle(extractGeneratedTitle(response.content));
+		const title = normalizeGeneratedTitle(extractGeneratedTitle(response.content), firstMessage);
 
 		if (!title) {
 			logger.debug("title-generator: no title returned", {
