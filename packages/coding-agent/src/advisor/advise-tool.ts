@@ -164,12 +164,19 @@ export class AdviseTool implements AgentTool<typeof adviseSchema, AdviseDetails>
 	 *  escalation: nit → concern → blocker), so an advisor cannot bypass dedupe
 	 *  by retagging the same text at a lower or equal severity. */
 	#deliveredNoteSeverities = new Map<string, number>();
+	#deliveredInCurrentUpdate = false;
 
 	constructor(private readonly onAdvice: (note: string, severity?: AdviseDetails["severity"]) => void) {}
 
 	/** Clear delivered-note memory when the advisor starts a fresh conversation. */
 	resetDeliveredNotes(): void {
 		this.#deliveredNoteSeverities.clear();
+		this.#deliveredInCurrentUpdate = false;
+	}
+
+	/** Start a new watched-session update; the advisor may surface one note. */
+	beginUpdate(): void {
+		this.#deliveredInCurrentUpdate = false;
 	}
 
 	async execute(
@@ -179,6 +186,13 @@ export class AdviseTool implements AgentTool<typeof adviseSchema, AdviseDetails>
 		_onUpdate?: AgentToolUpdateCallback<AdviseDetails>,
 		_context?: AgentToolContext,
 	): Promise<AgentToolResult<AdviseDetails>> {
+		if (this.#deliveredInCurrentUpdate) {
+			return {
+				content: [{ type: "text", text: "Advice already recorded for this update." }],
+				details: { note: args.note, severity: args.severity },
+				useless: true,
+			};
+		}
 		const key = advisorNoteDedupeKey(args.note);
 		const rank = advisorSeverityRank(args.severity);
 		const previousRank = this.#deliveredNoteSeverities.get(key) ?? 0;
@@ -190,6 +204,7 @@ export class AdviseTool implements AgentTool<typeof adviseSchema, AdviseDetails>
 			};
 		}
 		this.#deliveredNoteSeverities.set(key, rank);
+		this.#deliveredInCurrentUpdate = true;
 		this.onAdvice(args.note, args.severity);
 		return {
 			content: [{ type: "text", text: "Recorded." }],

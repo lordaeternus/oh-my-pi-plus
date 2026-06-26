@@ -199,6 +199,18 @@ describe("advisor", () => {
 			expect(result.useless).toBe(true);
 		});
 
+		it("delivers at most one note before the advisor receives the next update", async () => {
+			const onAdvice = vi.fn();
+			const tool = new AdviseTool(onAdvice);
+
+			await tool.execute("tc-1", { note: "first blocker", severity: "blocker" });
+			const result = await tool.execute("tc-2", { note: "second blocker", severity: "blocker" });
+
+			expect(onAdvice).toHaveBeenCalledTimes(1);
+			expect(onAdvice).toHaveBeenCalledWith("first blocker", "blocker");
+			expect(result.content).toEqual([{ type: "text", text: "Advice already recorded for this update." }]);
+		});
+
 		it("suppresses duplicate advice notes from the same advisor session", async () => {
 			const onAdvice = vi.fn();
 			const tool = new AdviseTool(onAdvice);
@@ -231,10 +243,14 @@ describe("advisor", () => {
 			const note = "Rename collides with the existing helper.";
 
 			await tool.execute("tc-1", { note, severity: "nit" });
+			tool.beginUpdate();
 			await tool.execute("tc-2", { note, severity: "concern" });
+			tool.beginUpdate();
 			await tool.execute("tc-3", { note, severity: "blocker" });
+			tool.beginUpdate();
 			// De-escalation back to nit or concern is treated as a duplicate.
 			await tool.execute("tc-4", { note, severity: "concern" });
+			tool.beginUpdate();
 			await tool.execute("tc-5", { note, severity: "nit" });
 
 			expect(onAdvice).toHaveBeenCalledTimes(3);

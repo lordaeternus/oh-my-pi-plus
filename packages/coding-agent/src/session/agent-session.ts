@@ -1979,7 +1979,10 @@ export class AgentSession {
 		advisorAgent.setDisableReasoning(shouldDisableReasoning(advisorThinkingLevel));
 
 		const advisorAgentFacade: AdvisorAgent = {
-			prompt: input => advisorAgent.prompt(input),
+			prompt: input => {
+				adviseTool.beginUpdate();
+				return advisorAgent.prompt(input);
+			},
 			abort: reason => advisorAgent.abort(reason),
 			reset: () => {
 				advisorAgent.reset();
