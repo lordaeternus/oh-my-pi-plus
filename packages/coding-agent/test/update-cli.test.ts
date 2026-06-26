@@ -8,6 +8,7 @@ import {
 	buildHomebrewUpdateArgs,
 	buildMiseForceInstallArgs,
 	buildMiseUpgradeArgs,
+	isPlusDevLauncher,
 	replaceBinaryForUpdate,
 	resolveUpdateMethodForTest,
 	sweepStaleBackups,
@@ -50,7 +51,12 @@ describe("update-cli install target detection", () => {
 		await fs.mkdir(path.join(prefix, "bin"), { recursive: true });
 		await fs.mkdir(linkedBin, { recursive: true });
 		await Bun.write(path.join(prefix, "bin", "omp"), "binary");
-		await fs.symlink(path.join(prefix, "bin", "omp"), path.join(linkedBin, "omp"));
+		try {
+			await fs.symlink(path.join(prefix, "bin", "omp"), path.join(linkedBin, "omp"));
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException).code === "EPERM" && process.platform === "win32") return;
+			throw err;
+		}
 
 		const method = resolveUpdateMethodForTest(path.join(linkedBin, "omp"), "/Users/test/.bun/bin", {
 			homebrewPrefix: prefix,
@@ -89,6 +95,14 @@ describe("update-cli package manager commands", () => {
 	it("targets the mise GitHub backend tool and force-reinstalls the checked version when requested", () => {
 		expect(buildMiseUpgradeArgs()).toEqual(["upgrade", "github:can1357/oh-my-pi", "--bump"]);
 		expect(buildMiseForceInstallArgs("15.10.5")).toEqual(["install", "--force", "github:can1357/oh-my-pi@15.10.5"]);
+	});
+});
+
+describe("update-cli plus dev launcher guard", () => {
+	it("detects the local omp-plus launcher so it does not update the upstream global omp install", () => {
+		expect(isPlusDevLauncher({ OMP_PLUS_LAUNCH_DIR: "C:\\Users\\User\\.omp\\.dev-cwd" })).toBe(true);
+		expect(isPlusDevLauncher({ OMP_DISPLAY_NAME: "Oh My Pi Plus" })).toBe(true);
+		expect(isPlusDevLauncher({})).toBe(false);
 	});
 });
 

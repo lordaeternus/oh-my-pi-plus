@@ -136,8 +136,10 @@ import {
 	AdvisorTranscriptRecorder,
 	formatAdvisorBatchContent,
 	isAdvisorInterruptImmuneTurnActive,
+	isAdvisorTaskEndStopCandidate,
 	isInterruptingSeverity,
 	resolveAdvisorDeliveryChannel,
+	shouldRunAdvisorReview,
 } from "../advisor";
 import { type AsyncJob, type AsyncJobDeliveryState, AsyncJobManager } from "../async";
 import { classifyDifficulty } from "../auto-thinking/classifier";
@@ -1838,11 +1840,7 @@ export class AgentSession {
 	): Promise<boolean> {
 		if (!this.#advisorRuntime || this.#advisorRuntime.disposed) return false;
 		const mode = this.settings.get("advisor.mode");
-		const shouldRun =
-			reason === "manual" ||
-			mode === "every-turn" ||
-			(mode === "end-of-task" && reason === "task-end") ||
-			(mode === "risk-only" && (reason === "risk" || reason === "task-end") && this.#advisorRiskPending);
+		const shouldRun = shouldRunAdvisorReview(mode, reason, this.#advisorRiskPending);
 		if (!shouldRun) return false;
 
 		this.#advisorRuntime.onTurnEnd(messages);
@@ -3034,6 +3032,9 @@ export class AgentSession {
 					await emitAgentEndNotification();
 					return;
 				}
+			}
+			if (isAdvisorTaskEndStopCandidate(msg)) {
+				await this.#runAdvisorReviewIfNeeded(settledMessages, undefined, "task-end");
 			}
 			await this.#emitSessionStopEvent(settledMessages);
 			await emitAgentEndNotification();

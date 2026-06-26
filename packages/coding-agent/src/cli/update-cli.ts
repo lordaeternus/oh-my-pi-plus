@@ -93,6 +93,10 @@ export function parseUpdateArgs(args: string[]): { force: boolean; check: boolea
 	};
 }
 
+export function isPlusDevLauncher(env: NodeJS.ProcessEnv = process.env): boolean {
+	return env.OMP_PLUS_LAUNCH_DIR !== undefined || env.OMP_DISPLAY_NAME === "Oh My Pi Plus";
+}
+
 async function getBunGlobalBinDir(): Promise<string | undefined> {
 	if (!$which("bun")) return undefined;
 	try {
@@ -604,6 +608,14 @@ async function updateViaBinaryAt(targetPath: string, expectedVersion: string): P
  */
 export async function runUpdateCommand(opts: { force: boolean; check: boolean }): Promise<void> {
 	console.log(chalk.dim(`Current version: ${VERSION}`));
+	if (isPlusDevLauncher()) {
+		console.log(
+			chalk.yellow(
+				"omp-plus runs from the local oh-my-pi checkout; update that repo instead of the upstream global omp package.",
+			),
+		);
+		return;
+	}
 
 	// Check for updates
 	let release: ReleaseInfo;
