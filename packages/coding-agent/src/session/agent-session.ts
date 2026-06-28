@@ -13467,6 +13467,11 @@ export class AgentSession {
 		return this.#advisorAgent !== undefined;
 	}
 
+	/** Whether the advisor's running indicator is currently active. */
+	isAdvisorRunning(): boolean {
+		return this.#advisorRuntime?.running ?? false;
+	}
+
 	/**
 	 * Queue an advisor review for the current transcript.
 	 *

@@ -21,6 +21,7 @@ import { calculateTokensPerSecond } from "./token-rate";
 import type {
 	CollabStatus,
 	EffectiveStatusLineSettings,
+	StatusLineHookStatus,
 	StatusLineSegmentId,
 	StatusLineSegmentOptions,
 	StatusLineSettings,
@@ -187,7 +188,7 @@ export class StatusLineComponent implements Component {
 	#onBranchChange: (() => void) | null = null;
 	#disposed = false;
 	#autoCompactEnabled: boolean = true;
-	#hookStatuses: Map<string, string> = new Map();
+	#hookStatuses: Map<string, StatusLineHookStatus> = new Map();
 	#subagentCount: number = 0;
 	#sessionStartTime: number = Date.now();
 	#planModeStatus: { enabled: boolean; paused: boolean } | null = null;
@@ -304,11 +305,11 @@ export class StatusLineComponent implements Component {
 		this.#collabStatus = status;
 	}
 
-	setHookStatus(key: string, text: string | undefined): void {
-		if (text === undefined) {
+	setHookStatus(key: string, status: string | StatusLineHookStatus | undefined): void {
+		if (status === undefined) {
 			this.#hookStatuses.delete(key);
 		} else {
-			this.#hookStatuses.set(key, text);
+			this.#hookStatuses.set(key, typeof status === "string" ? { text: status } : status);
 		}
 	}
 
@@ -1042,7 +1043,10 @@ export class StatusLineComponent implements Component {
 
 		const sortedStatuses = Array.from(this.#hookStatuses.entries())
 			.sort(([a], [b]) => a.localeCompare(b))
-			.map(([, text]) => sanitizeStatusText(text));
+			.map(([, status]) => {
+				const text = sanitizeStatusText(status.text);
+				return status.color ? theme.fg(status.color, text) : text;
+			});
 		const hookLine = sortedStatuses.join(" ");
 		return [truncateToWidth(hookLine, width)];
 	}

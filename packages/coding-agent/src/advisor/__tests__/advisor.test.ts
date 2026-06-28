@@ -540,6 +540,162 @@ describe("advisor", () => {
 			expect(events).toEqual([true, false]);
 		});
 
+		it("clears running status immediately when disposed during a hung prompt", async () => {
+			const events: boolean[] = [];
+			const { promise: promptStarted, resolve: startPrompt } = Promise.withResolvers<void>();
+			const agent: AdvisorAgent = {
+				prompt: async () => {
+					startPrompt();
+					await new Promise(() => {});
+				},
+				abort: () => {},
+				reset: () => {},
+				state: { messages: [] },
+			};
+			const messages: AgentMessage[] = [{ role: "user", content: "first", timestamp: 1 } as AgentMessage];
+			const host: AdvisorRuntimeHost = {
+				snapshotMessages: () => messages,
+				enqueueAdvice: () => {},
+				setRunning: running => events.push(running),
+			};
+			const runtime = new AdvisorRuntime(agent, host, 0, 0);
+
+			runtime.onTurnEnd(messages);
+			await promptStarted;
+			runtime.dispose();
+
+			expect(events).toEqual([true, false]);
+		});
+
+		it("starts a fresh drain after reset aborts an in-flight advisor prompt", async () => {
+			const promptInputs: string[] = [];
+			const { promise: firstPromptStarted, resolve: startFirstPrompt } = Promise.withResolvers<void>();
+			const { promise: secondPromptStarted, resolve: startSecondPrompt } = Promise.withResolvers<void>();
+			const { promise: firstPromptAborted, reject: rejectFirstPrompt } = Promise.withResolvers<void>();
+			let promptCalls = 0;
+			let aborts = 0;
+			const agent: AdvisorAgent = {
+				prompt: async input => {
+					promptInputs.push(input);
+					promptCalls++;
+					if (promptCalls === 1) {
+						startFirstPrompt();
+						await firstPromptAborted;
+					} else {
+						startSecondPrompt();
+					}
+				},
+				abort: () => {
+					aborts++;
+				},
+				reset: () => {},
+				state: { messages: [] },
+			};
+			const messages: AgentMessage[] = [{ role: "user", content: "first", timestamp: 1 } as AgentMessage];
+			const host: AdvisorRuntimeHost = {
+				snapshotMessages: () => messages,
+				enqueueAdvice: () => {},
+			};
+			const runtime = new AdvisorRuntime(agent, host, 0, 0);
+
+			runtime.onTurnEnd(messages);
+			await firstPromptStarted;
+
+			runtime.reset();
+			messages.push({ role: "user", content: "second", timestamp: 2 } as AgentMessage);
+			runtime.onTurnEnd(messages);
+			expect(promptInputs).toHaveLength(1);
+
+			rejectFirstPrompt(new Error("advisor reset"));
+			await secondPromptStarted;
+
+			expect(aborts).toBe(1);
+			expect(promptInputs).toHaveLength(2);
+			expect(promptInputs[1]).toContain("second");
+		});
+
+		it("starts a fresh drain when reset happens during context maintenance", async () => {
+			const promptInputs: string[] = [];
+			const running: boolean[] = [];
+			const { promise: maintenanceStarted, resolve: startMaintenance } = Promise.withResolvers<void>();
+			const { promise: finishMaintenance, resolve: releaseMaintenance } = Promise.withResolvers<boolean>();
+			const { promise: promptStarted, resolve: startPrompt } = Promise.withResolvers<void>();
+			const agent: AdvisorAgent = {
+				prompt: async input => {
+					promptInputs.push(input);
+					startPrompt();
+				},
+				abort: () => {},
+				reset: () => {},
+				state: { messages: [] },
+			};
+			const messages: AgentMessage[] = [{ role: "user", content: "first", timestamp: 1 } as AgentMessage];
+			let maintenanceCalls = 0;
+			const host: AdvisorRuntimeHost = {
+				snapshotMessages: () => messages,
+				enqueueAdvice: () => {},
+				setRunning: value => running.push(value),
+				maintainContext: async () => {
+					maintenanceCalls++;
+					if (maintenanceCalls === 1) {
+						startMaintenance();
+						return await finishMaintenance;
+					}
+					return false;
+				},
+			};
+			const runtime = new AdvisorRuntime(agent, host, 0, 0);
+
+			runtime.onTurnEnd(messages);
+			await maintenanceStarted;
+			runtime.reset();
+			messages.push({ role: "user", content: "second", timestamp: 2 } as AgentMessage);
+			runtime.onTurnEnd(messages);
+
+			releaseMaintenance(false);
+			await promptStarted;
+
+			expect(promptInputs).toHaveLength(1);
+			expect(promptInputs[0]).toContain("second");
+			expect(running).toEqual([true, false, true]);
+		});
+
+		it("keeps running status cleared when reset happens during context maintenance without new work", async () => {
+			const promptInputs: string[] = [];
+			const running: boolean[] = [];
+			const { promise: maintenanceStarted, resolve: startMaintenance } = Promise.withResolvers<void>();
+			const { promise: finishMaintenance, resolve: releaseMaintenance } = Promise.withResolvers<boolean>();
+			const agent: AdvisorAgent = {
+				prompt: async input => {
+					promptInputs.push(input);
+				},
+				abort: () => {},
+				reset: () => {},
+				state: { messages: [] },
+			};
+			const messages: AgentMessage[] = [{ role: "user", content: "first", timestamp: 1 } as AgentMessage];
+			const host: AdvisorRuntimeHost = {
+				snapshotMessages: () => messages,
+				enqueueAdvice: () => {},
+				setRunning: value => running.push(value),
+				maintainContext: async () => {
+					startMaintenance();
+					return await finishMaintenance;
+				},
+			};
+			const runtime = new AdvisorRuntime(agent, host, 0, 0);
+
+			runtime.onTurnEnd(messages);
+			await maintenanceStarted;
+			runtime.reset();
+			releaseMaintenance(false);
+			await Bun.sleep(0);
+
+			expect(promptInputs).toHaveLength(0);
+			expect(running).toEqual([true, false]);
+			expect(runtime.running).toBe(false);
+		});
+
 		it("budgets only the batch sent after async context maintenance", async () => {
 			const promptInputs: string[] = [];
 			const { promise: firstMaintainStarted, resolve: startFirstMaintain } = Promise.withResolvers<void>();

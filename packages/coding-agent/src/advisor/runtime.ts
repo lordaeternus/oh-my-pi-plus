@@ -58,6 +58,8 @@ export class AdvisorRuntime {
 	#seenContext = new Map<string, string>();
 	#pending: PendingDelta[] = [];
 	#busy = false;
+	#runningStatus = false;
+	#drainRequested = false;
 	#backlog = 0;
 	#consecutiveFailures = 0;
 	#latestMessages?: AgentMessage[];
@@ -80,6 +82,10 @@ export class AdvisorRuntime {
 		return this.#backlog;
 	}
 
+	get running(): boolean {
+		return this.#runningStatus;
+	}
+
 	onTurnEnd(messages?: AgentMessage[]): boolean {
 		if (this.disposed) return false;
 		const all = messages ?? this.host.snapshotMessages();
@@ -89,7 +95,7 @@ export class AdvisorRuntime {
 		this.#pending.push({ text: render, turns: 1 });
 		this.#backlog++;
 		this.#notifyWaiters();
-		void this.#drain();
+		this.#requestDrain();
 		return true;
 	}
 
@@ -108,7 +114,7 @@ export class AdvisorRuntime {
 		this.#pending.push({ text: render, turns: 1 });
 		this.#backlog++;
 		this.#notifyWaiters();
-		void this.#drain();
+		this.#requestDrain();
 		return true;
 	}
 
@@ -132,6 +138,11 @@ export class AdvisorRuntime {
 		return promise;
 	}
 
+	#setRunning(running: boolean): void {
+		this.#runningStatus = running;
+		this.host.setRunning?.(running);
+	}
+
 	dispose(): void {
 		this.disposed = true;
 		this.#epoch++;
@@ -139,14 +150,16 @@ export class AdvisorRuntime {
 		this.#backlog = 0;
 		this.#consecutiveFailures = 0;
 		this.#wakeAllWaiters();
+		this.#setRunning(false);
 		try {
 			this.agent.abort("advisor disposed");
 		} catch {}
 	}
 
-	#resetAdvisorContext(clearBacklog: boolean, wakeWaiters: boolean): void {
+	#resetAdvisorContext(clearBacklog: boolean, wakeWaiters: boolean, clearRunning = true): void {
 		this.#lastCount = 0;
 		this.#pending = [];
+		this.#drainRequested = false;
 		this.#consecutiveFailures = 0;
 		this.#seenContext.clear();
 		if (clearBacklog) {
@@ -155,6 +168,7 @@ export class AdvisorRuntime {
 		if (wakeWaiters) {
 			this.#wakeAllWaiters();
 		}
+		if (clearRunning) this.#setRunning(false);
 		try {
 			this.agent.reset();
 		} catch {}
@@ -250,10 +264,20 @@ export class AdvisorRuntime {
 		}
 	}
 
+	#requestDrain(): void {
+		if (this.#busy) {
+			this.#drainRequested = true;
+			return;
+		}
+		void this.#drain();
+	}
+
 	async #drain(): Promise<void> {
 		if (this.#busy) return;
 		this.#busy = true;
-		this.host.setRunning?.(true);
+		this.#drainRequested = false;
+		this.#setRunning(true);
+		let runningClearedExternally = false;
 		try {
 			while (!this.disposed && this.#pending.length) {
 				const popped = this.#pending.splice(0);
@@ -277,14 +301,17 @@ export class AdvisorRuntime {
 					}
 				}
 				// A reset/dispose during context maintenance invalidates this batch.
-				if (this.#epoch !== epoch) continue;
+				if (this.#epoch !== epoch) {
+					runningClearedExternally = true;
+					break;
+				}
 
 				let batch: string | null;
 				let finalTurns: number;
 				if (shouldReprime) {
 					// Promotion could not fit the advisor's context — re-prime.
 					const newTurns = this.#pending.reduce((sum, b) => sum + b.turns, 0);
-					this.#resetAdvisorContext(false, false);
+					this.#resetAdvisorContext(false, false, false);
 					batch = this.#renderDelta(this.#latestMessages);
 					finalTurns = turnsCovered + newTurns;
 				} else {
@@ -310,7 +337,10 @@ export class AdvisorRuntime {
 					// reset itself, not a transient advisor failure. Drop the stale batch
 					// (reset already cleared #pending and rewound the cursor) instead of
 					// requeuing it into the post-reset conversation.
-					if (this.#epoch !== epoch) continue;
+					if (this.#epoch !== epoch) {
+						runningClearedExternally = true;
+						break;
+					}
 					if (err instanceof AdvisorPromptTimeoutError) {
 						logger.warn("advisor prompt timed out; dropping batch", { timeoutMs: this.promptTimeoutMs });
 						this.#consecutiveFailures = 0;
@@ -340,8 +370,13 @@ export class AdvisorRuntime {
 				}
 			}
 		} finally {
-			this.host.setRunning?.(false);
+			if (!this.disposed && !runningClearedExternally) this.#setRunning(false);
 			this.#busy = false;
+			const shouldDrainAgain = !this.disposed && (this.#drainRequested || this.#pending.length > 0);
+			this.#drainRequested = false;
+			if (shouldDrainAgain) {
+				queueMicrotask(() => this.#requestDrain());
+			}
 		}
 	}
 }

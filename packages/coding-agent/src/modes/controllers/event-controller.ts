@@ -42,6 +42,8 @@ const IRC_MESSAGE_VISIBLE_TTL_MS = 10_000;
  * oldest live-region card retires as soon as a new one would exceed the cap.
  */
 const MAX_LIVE_IRC_CARDS = 4;
+const ADVISOR_STATUS_FRAME_MS = 80;
+const ADVISOR_STATUS_TEXT = "Advisor analisando...";
 
 type AgentSessionEventHandlers = {
 	[E in AgentSessionEventKind]: (event: Extract<AgentSessionEvent, { type: E }>) => Promise<void>;
@@ -84,6 +86,8 @@ export class EventController {
 	// Most recent TTSR notification block. A new ttsr_triggered event merges its
 	// rules into this block while it is still the (live-region) transcript tail.
 	#lastTtsrNotification: TtsrNotificationComponent | undefined = undefined;
+	#advisorStatusTimer: NodeJS.Timeout | undefined;
+	#advisorStatusFrame = 0;
 	#streamingReveal: StreamingRevealController;
 	#toolArgsReveal: ToolArgsRevealController;
 	#handlers: AgentSessionEventHandlers;
@@ -135,6 +139,7 @@ export class EventController {
 		this.#streamingReveal.stop();
 		this.#toolArgsReveal.stop();
 		this.#cancelIdleCompaction();
+		this.#stopAdvisorStatusAnimation();
 		for (const timer of this.#ircExpiryTimers.values()) {
 			clearTimeout(timer);
 		}
@@ -225,6 +230,7 @@ export class EventController {
 		this.#lastAssistantComponent = undefined;
 		this.#pinnedErrorComponent = undefined;
 		this.#cancelIdleCompaction();
+		this.#stopAdvisorStatusAnimation();
 		for (const timer of this.#ircExpiryTimers.values()) {
 			clearTimeout(timer);
 		}
@@ -475,9 +481,41 @@ export class EventController {
 	}
 
 	#handleAdvisorStatus(event: Extract<AgentSessionEvent, { type: "advisor_status" }>): Promise<void> {
-		this.ctx.statusLine.setHookStatus("advisor", event.running ? "Advisor analisando..." : undefined);
+		if (event.running) {
+			this.#startAdvisorStatusAnimation();
+		} else {
+			this.#stopAdvisorStatusAnimation();
+		}
 		this.ctx.ui.requestRender();
 		return Promise.resolve();
+	}
+
+	#startAdvisorStatusAnimation(): void {
+		this.#advisorStatusFrame = 0;
+		this.#renderAdvisorStatusFrame();
+		if (this.#advisorStatusTimer !== undefined) return;
+		this.#advisorStatusTimer = setInterval(() => {
+			this.#advisorStatusFrame++;
+			this.#renderAdvisorStatusFrame();
+			this.ctx.ui.requestRender();
+		}, ADVISOR_STATUS_FRAME_MS);
+		this.#advisorStatusTimer.unref?.();
+	}
+
+	#stopAdvisorStatusAnimation(): void {
+		if (this.#advisorStatusTimer !== undefined) {
+			clearInterval(this.#advisorStatusTimer);
+			this.#advisorStatusTimer = undefined;
+		}
+		this.#advisorStatusFrame = 0;
+		this.ctx.statusLine.setHookStatus("advisor", undefined);
+	}
+
+	#renderAdvisorStatusFrame(): void {
+		const frames = getSymbolTheme().spinnerFrames;
+		const spinner = frames[this.#advisorStatusFrame % frames.length] ?? "";
+		const text = spinner ? `${spinner} ${ADVISOR_STATUS_TEXT}` : ADVISOR_STATUS_TEXT;
+		this.ctx.statusLine.setHookStatus("advisor", { text, color: "customMessageLabel" });
 	}
 
 	/** A new turn interrupts any speech still queued/playing from the previous one. */

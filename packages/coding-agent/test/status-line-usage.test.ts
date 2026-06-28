@@ -4,7 +4,7 @@ import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config
 import { StatusLineComponent } from "@oh-my-pi/pi-coding-agent/modes/components/status-line";
 import { renderSegment } from "@oh-my-pi/pi-coding-agent/modes/components/status-line/segments";
 import type { SegmentContext } from "@oh-my-pi/pi-coding-agent/modes/components/status-line/types";
-import { initTheme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import { initTheme, theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 
 beforeAll(async () => {
 	resetSettingsForTest();
@@ -59,6 +59,21 @@ async function flushUsageRefresh(): Promise<void> {
 	await Promise.resolve();
 	await Promise.resolve();
 }
+
+describe("hook status rendering", () => {
+	it("renders advisor status with the configured purple theme color", () => {
+		const component = makeComponent([]);
+		component.updateSettings({ preset: "custom", leftSegments: [], rightSegments: [], showHookStatus: true });
+		component.setHookStatus("advisor", {
+			text: "⠋ Advisor analisando...",
+			color: "customMessageLabel",
+		});
+
+		const [rendered] = component.render(80);
+		expect(rendered).toStartWith(theme.getFgAnsi("customMessageLabel"));
+		expect(stripVTControlCharacters(rendered)).toBe("⠋ Advisor analisando...");
+	});
+});
 
 describe("usage status-line segment", () => {
 	it("renders untiered five-hour and seven-day limits", () => {

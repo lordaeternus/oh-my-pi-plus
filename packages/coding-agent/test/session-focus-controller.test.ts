@@ -13,11 +13,12 @@ interface SessionStub {
 	setStreaming: (streaming: boolean) => void;
 }
 
-function makeSessionStub(opts: { isStreaming?: boolean } = {}): SessionStub {
+function makeSessionStub(opts: { isStreaming?: boolean; advisorRunning?: boolean } = {}): SessionStub {
 	let listener: ((event: AgentSessionEvent) => Promise<void> | void) | undefined;
 	let unsubscribeCalls = 0;
 	const stub = {
 		isStreaming: opts.isStreaming ?? false,
+		isAdvisorRunning: () => opts.advisorRunning ?? false,
 		subscribe(fn: (event: AgentSessionEvent) => Promise<void> | void) {
 			listener = fn;
 			return () => {
@@ -140,7 +141,7 @@ describe("SessionFocusController", () => {
 
 		const event = { type: "message_start", message: { role: "user" } };
 		await worker.emit(event);
-		expect(h.handledEvents).toEqual([event]);
+		expect(h.handledEvents).toEqual([{ type: "advisor_status", running: false }, event]);
 	});
 
 	it("mid-turn attach synthesizes agent_start, and an orphaned assistant message_update gets a synthesized message_start", async () => {
@@ -149,18 +150,38 @@ describe("SessionFocusController", () => {
 		registerSub(h.registry, "Worker", worker.session, MAIN_AGENT_ID);
 
 		await h.controller.focusAgent("Worker");
-		expect(h.handledEvents).toEqual([{ type: "agent_start" }]);
+		expect(h.handledEvents).toEqual([{ type: "agent_start" }, { type: "advisor_status", running: false }]);
 
 		const message = { role: "assistant", content: "partial" };
 		await worker.emit({ type: "message_update", message });
-		expect(h.handledEvents.slice(1)).toEqual([
+		expect(h.handledEvents.slice(2)).toEqual([
 			{ type: "message_start", message },
 			{ type: "message_update", message },
 		]);
 
 		// Guard fires once: subsequent updates pass through unsynthesized.
 		await worker.emit({ type: "message_update", message });
-		expect(h.handledEvents.slice(3)).toEqual([{ type: "message_update", message }]);
+		expect(h.handledEvents.slice(4)).toEqual([{ type: "message_update", message }]);
+	});
+
+	it("replays an active advisor status when attaching mid-analysis", async () => {
+		const h = makeHarness();
+		const worker = makeSessionStub({ advisorRunning: true });
+		registerSub(h.registry, "Worker", worker.session, MAIN_AGENT_ID);
+
+		await h.controller.focusAgent("Worker");
+
+		expect(h.handledEvents).toContainEqual({ type: "advisor_status", running: true });
+	});
+
+	it("clears advisor status when attaching to an idle session", async () => {
+		const h = makeHarness();
+		const worker = makeSessionStub();
+		registerSub(h.registry, "Worker", worker.session, MAIN_AGENT_ID);
+
+		await h.controller.focusAgent("Worker");
+
+		expect(h.handledEvents).toContainEqual({ type: "advisor_status", running: false });
 	});
 
 	it("focusParent walks parentId to a registered non-main agent, then re-attaches the main session", async () => {

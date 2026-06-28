@@ -14,7 +14,7 @@ import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config
 import { AssistantMessageComponent } from "@oh-my-pi/pi-coding-agent/modes/components/assistant-message";
 import { ErrorBannerComponent } from "@oh-my-pi/pi-coding-agent/modes/components/error-banner";
 import { EventController } from "@oh-my-pi/pi-coding-agent/modes/controllers/event-controller";
-import { initTheme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import { getSymbolTheme, initTheme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
 import type { AgentSessionEvent } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 
@@ -67,11 +67,12 @@ function createFixture(streamingMessage?: AssistantMessage) {
 	};
 
 	const session = { isTtsrAbortPending: false, retryAttempt: 0 };
+	const setHookStatus = vi.fn();
 	const ctx = {
 		isInitialized: true,
 		init: vi.fn(async () => {}),
 		ui: { requestRender: vi.fn(), requestComponentRender: vi.fn() },
-		statusLine: { invalidate: vi.fn(), setHookStatus: vi.fn() },
+		statusLine: { invalidate: vi.fn(), setHookStatus },
 		updateEditorTopBorder: vi.fn(),
 		updateEditorBorderColor: vi.fn(),
 		ensureLoadingAnimation: vi.fn(),
@@ -92,18 +93,37 @@ function createFixture(streamingMessage?: AssistantMessage) {
 	} as unknown as InteractiveModeContext;
 
 	const controller = new EventController(ctx);
-	return { controller, ctx, showPinnedError, clearPinnedError, streamingComponent };
+	return { controller, ctx, setHookStatus, showPinnedError, clearPinnedError, streamingComponent };
 }
 
 describe("EventController advisor status", () => {
-	it("shows and clears the advisor running footer status", async () => {
-		const { controller, ctx } = createFixture();
+	it("shows an animated purple advisor running footer status and clears it", async () => {
+		const { controller, ctx, setHookStatus } = createFixture();
 
-		await controller.handleEvent({ type: "advisor_status", running: true } as AgentSessionEvent);
-		await controller.handleEvent({ type: "advisor_status", running: false } as AgentSessionEvent);
+		vi.useFakeTimers();
+		try {
+			await controller.handleEvent({ type: "advisor_status", running: true } as AgentSessionEvent);
+			const frames = getSymbolTheme().spinnerFrames;
+			expect(setHookStatus).toHaveBeenNthCalledWith(1, "advisor", {
+				text: `${frames[0]} Advisor analisando...`,
+				color: "customMessageLabel",
+			});
 
-		expect(ctx.statusLine.setHookStatus).toHaveBeenNthCalledWith(1, "advisor", "Advisor analisando...");
-		expect(ctx.statusLine.setHookStatus).toHaveBeenNthCalledWith(2, "advisor", undefined);
+			vi.advanceTimersByTime(80);
+			expect(setHookStatus).toHaveBeenNthCalledWith(2, "advisor", {
+				text: `${frames[1]} Advisor analisando...`,
+				color: "customMessageLabel",
+			});
+
+			await controller.handleEvent({ type: "advisor_status", running: false } as AgentSessionEvent);
+			expect(setHookStatus).toHaveBeenLastCalledWith("advisor", undefined);
+
+			const callsAfterClear = setHookStatus.mock.calls.length;
+			vi.advanceTimersByTime(80);
+			expect(setHookStatus.mock.calls).toHaveLength(callsAfterClear);
+		} finally {
+			vi.useRealTimers();
+		}
 		expect(ctx.ui.requestRender).toHaveBeenCalled();
 	});
 });
