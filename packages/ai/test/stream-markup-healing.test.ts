@@ -1,4 +1,10 @@
 import { describe, expect, it } from "bun:test";
+import {
+	type Dialect,
+	getDialectDefinition,
+	type InbandScanEvent,
+	ThinkingInbandScanner,
+} from "@oh-my-pi/pi-ai/dialect";
 import { streamOpenAICompletions } from "@oh-my-pi/pi-ai/providers/openai-completions";
 import { stream } from "@oh-my-pi/pi-ai/stream";
 import type { Context, FetchImpl, Model, ThinkingContent, Tool, ToolCall } from "@oh-my-pi/pi-ai/types";
@@ -139,16 +145,88 @@ function mockNdjsonFetch(lines: ReadonlyArray<unknown>): FetchImpl {
 }
 
 describe("StreamMarkupHealing pattern selection", () => {
-	it("selects the requested grammar without creating provider-specific collectors", () => {
+	it("routes tool-call leaks to their grammar and everything else to thinking", () => {
 		expect(getStreamMarkupHealingPattern("openrouter", "moonshotai/kimi-k2")).toBe("kimi");
 		expect(getStreamMarkupHealingPattern("ollama-cloud", "deepseek-v4-pro")).toBe("dsml");
-		expect(getStreamMarkupHealingPattern("minimax-code", "MiniMax-M2.5", { parseThinkingTags: true })).toBe(
-			"thinking",
-		);
-		expect(getStreamMarkupHealingPattern("opencode-zen", "minimax-m3")).toBe("thinking");
 		expect(getStreamMarkupHealingPattern("nanogpt", "deepseek/deepseek-v4-pro")).toBe("dsml");
-		expect(getStreamMarkupHealingPattern("ollama-cloud", "gpt-oss:120b")).toBeUndefined();
-		expect(getStreamMarkupHealingPattern("openai", "deepseek-v4-pro")).toBeUndefined();
+		// Every other model heals leaked reasoning idioms by default.
+		expect(getStreamMarkupHealingPattern("opencode-zen", "minimax-m3")).toBe("thinking");
+		expect(getStreamMarkupHealingPattern("openrouter", "google/gemini-3.5-flash")).toBe("thinking");
+		expect(getStreamMarkupHealingPattern("ollama-cloud", "gpt-oss:120b")).toBe("thinking");
+		// A DeepSeek id on a non-DSML provider falls back to thinking, not the envelope grammar.
+		expect(getStreamMarkupHealingPattern("openai", "deepseek-v4-pro")).toBe("thinking");
+	});
+});
+
+describe("openai-completions leaked thinking healing", () => {
+	// Gemini on OpenRouter (chat-completions) leaks its canonical ` ```thinking `
+	// fence into `delta.content`. The default "thinking" healer must lift it back
+	// into a thinking block instead of leaving the fence as visible text (#bug).
+	const geminiModel = buildModel({
+		id: "google/gemini-3.5-flash",
+		name: "Gemini 3.5 Flash",
+		api: "openai-completions",
+		provider: "openrouter",
+		baseUrl: "https://openrouter.ai/api/v1",
+		reasoning: true,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1_000_000,
+		maxTokens: 8_192,
+	});
+
+	it("lifts a leaked gemini thinking fence out of the visible reply", async () => {
+		const leaked = "```thinking\nWeigh the options.\n```\nFinal answer.";
+		const fetchMock = mockFetch([
+			chunk(geminiModel.id, { content: leaked }),
+			chunk(geminiModel.id, {}, "stop"),
+			"[DONE]",
+		]);
+
+		const result = await streamOpenAICompletions(geminiModel, baseContext(), {
+			apiKey: "test",
+			fetch: fetchMock,
+		}).result();
+
+		const text = result.content
+			.filter(b => b.type === "text")
+			.map(b => b.text)
+			.join("");
+		const thinking = result.content
+			.filter((b): b is ThinkingContent => b.type === "thinking")
+			.map(b => b.thinking)
+			.join("");
+
+		expect(thinking).toContain("Weigh the options.");
+		expect(text).not.toContain("```thinking");
+		expect(text.trim()).toBe("Final answer.");
+	});
+
+	it("keeps healed thinking from duplicating structured reasoning", async () => {
+		const fetchMock = mockFetch([
+			chunk(geminiModel.id, { reasoning_content: "structured reasoning" }),
+			chunk(geminiModel.id, { content: "```thinking\nleaked copy\n```visible" }),
+			chunk(geminiModel.id, {}, "stop"),
+			"[DONE]",
+		]);
+
+		const result = await streamOpenAICompletions(geminiModel, baseContext(), {
+			apiKey: "test",
+			fetch: fetchMock,
+		}).result();
+
+		const text = result.content
+			.filter(b => b.type === "text")
+			.map(b => b.text)
+			.join("");
+		const thinking = result.content
+			.filter((b): b is ThinkingContent => b.type === "thinking")
+			.map(b => b.thinking)
+			.join("");
+
+		expect(thinking).toBe("structured reasoning");
+		expect(thinking).not.toContain("leaked copy");
+		expect(text.trim()).toBe("visible");
 	});
 });
 
@@ -240,6 +318,24 @@ describe("StreamMarkupHealing DSML envelope pattern", () => {
 		).toBe("");
 		expect(healing.drainCompleted()).toHaveLength(1);
 	});
+
+	it("heals a leaked thinking fence while still reconstructing the tool call", () => {
+		// The DSML grammar's xml scanner does not parse thinking; proving the fence
+		// is lifted shows the always-on thinking healer runs alongside it.
+		const healing = new StreamMarkupHealing({ pattern: "dsml" });
+		const events = [
+			...healing.feedEvents("```thinking\nplan\n```before "),
+			...healing.feedEvents(REPORTED_DSML_LEAK),
+			...healing.feedEvents(" after"),
+			...healing.flushEvents(),
+		];
+		const thinking = events.flatMap(e => (e.type === "thinking" ? [e.thinking] : [])).join("");
+		const text = events.flatMap(e => (e.type === "text" ? [e.text] : [])).join("");
+		const calls = events.filter(e => e.type === "toolCall");
+		expect(thinking).toBe("plan\n");
+		expect(text).toBe("before  after");
+		expect(calls).toHaveLength(1);
+	});
 });
 
 describe("StreamMarkupHealing thinking pattern", () => {
@@ -248,6 +344,80 @@ describe("StreamMarkupHealing thinking pattern", () => {
 		expect(healing.feedEvents("visible <thin")).toEqual([{ type: "text", text: "visible " }]);
 		expect(healing.feedEvents("king>hidden</think")).toEqual([{ type: "thinking", thinking: "hidden" }]);
 		expect(healing.feedEvents("ing> answer")).toEqual([{ type: "text", text: " answer" }]);
+	});
+
+	// Heal input (one or more chunks) through the public entry point, returning the
+	// visible text and the recovered thinking. Spread a string to stream per char.
+	const heal = (...chunks: string[]): { text: string; thinking: string } => {
+		const healing = new StreamMarkupHealing({ pattern: "thinking" });
+		const events = [...chunks.flatMap(chunk => healing.feedEvents(chunk)), ...healing.flushEvents()];
+		let text = "";
+		let thinking = "";
+		for (const event of events) {
+			if (event.type === "text") text += event.text;
+			else if (event.type === "thinking") thinking += event.thinking;
+		}
+		return { text, thinking };
+	};
+
+	// Exhaustive over the dialect union: a missing case is a compile error, so the
+	// healer is proven to recover every dialect's canonical `renderThinking` form.
+	const DIALECT_CASES: { [K in Dialect]: K } = {
+		anthropic: "anthropic",
+		deepseek: "deepseek",
+		gemini: "gemini",
+		gemma: "gemma",
+		glm: "glm",
+		harmony: "harmony",
+		hermes: "hermes",
+		kimi: "kimi",
+		minimax: "minimax",
+		qwen3: "qwen3",
+		xml: "xml",
+	};
+
+	for (const dialect of Object.values(DIALECT_CASES)) {
+		it(`heals leaked ${dialect} reasoning back into thinking`, () => {
+			const rendered = getDialectDefinition(dialect).renderThinking("REASONING_SENTINEL");
+			const { text, thinking } = heal(`prefix ${rendered} suffix`);
+			expect(thinking).toContain("REASONING_SENTINEL");
+			expect(text).toBe("prefix  suffix");
+		});
+	}
+
+	it("heals a gemini ```thinking fence streamed character by character", () => {
+		const { text, thinking } = heal(..."Sure.```thinking\nweigh options\n```Done.");
+		expect(thinking).toBe("weigh options\n");
+		expect(text).toBe("Sure.Done.");
+	});
+
+	it("heals a bare harmony analysis channel leak", () => {
+		const { text, thinking } = heal("<|channel|>analysis<|message|>planning the edit<|end|>Final answer.");
+		expect(thinking).toBe("planning the edit");
+		expect(text).toBe("Final answer.");
+	});
+
+	it("heals a leaked <scratchpad> section", () => {
+		const { text, thinking } = heal("<scratchpad>jot</scratchpad>visible");
+		expect(thinking).toBe("jot");
+		expect(text).toBe("visible");
+	});
+
+	it("passes a bare '<' in idle prose through without holding it back", () => {
+		expect(heal("if a < b:\n    return a")).toEqual({ text: "if a < b:\n    return a", thinking: "" });
+	});
+
+	it("leaves unrelated markup as visible text", () => {
+		expect(heal("see <div>content</div> end")).toEqual({ text: "see <div>content</div> end", thinking: "" });
+	});
+
+	it("emits one balanced thinking boundary for a healed fence", () => {
+		const scanner = new ThinkingInbandScanner();
+		const events: InbandScanEvent[] = [...scanner.feed("a```thinking\nx\n```b"), ...scanner.flush()];
+		expect(events.filter(e => e.type === "thinkingStart")).toHaveLength(1);
+		expect(events.filter(e => e.type === "thinkingEnd")).toHaveLength(1);
+		const thinking = events.map(e => (e.type === "thinkingDelta" ? e.delta : "")).join("");
+		expect(thinking).toBe("x\n");
 	});
 });
 describe("Kimi K2 leaked markup healing", () => {

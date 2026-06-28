@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [16.2.3] - 2026-06-28
+
+### Added
+
+- Support for parsing named advisor transcripts using the `__advisor.<slug>.jsonl` naming convention.
+
+## [16.2.0] - 2026-06-27
+
+### Added
+
+- Added a Gain tab to the `omp stats` dashboard (`/#/gain`) to display snapcompact token-savings with project scoping from synced session folders.
+
 ## [16.1.17] - 2026-06-24
 
 ### Fixed

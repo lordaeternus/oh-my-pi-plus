@@ -373,6 +373,82 @@ describe("AgentSession handoff", () => {
 		expect(preserve.openaiRemoteCompaction).toBe(replaySlot);
 	});
 
+	it("does not call the LLM summarizer when manual snapcompact preflight fails", async () => {
+		const entries = sessionManager.getBranch();
+		const lastEntryId = entries[entries.length - 1]?.id;
+		if (!lastEntryId) throw new Error("Expected a seeded entry id");
+		const fixedPreparation: compactionModule.CompactionPreparation = {
+			firstKeptEntryId: lastEntryId,
+			messagesToSummarize: [
+				{ role: "user", content: [{ type: "text", text: "中文内容".repeat(100) }], timestamp: 1 },
+			],
+			turnPrefixMessages: [],
+			recentMessages: [],
+			isSplitTurn: false,
+			tokensBefore: 100,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { ...compactionModule.DEFAULT_COMPACTION_SETTINGS, strategy: "snapcompact" },
+		};
+		vi.spyOn(compactionModule, "prepareCompaction").mockReturnValue(fixedPreparation);
+		const compactSpy = vi.spyOn(compactionModule, "compact").mockRejectedValue(new Error("429 quota exhausted"));
+
+		await expect(session.compact(undefined, { mode: "snapcompact" })).rejects.toThrow(
+			"snapcompact cannot render this conversation locally",
+		);
+
+		expect(compactSpy).not.toHaveBeenCalled();
+	});
+
+	it("downgrades auto snapcompact to context-full when local preflight rejects the transcript", async () => {
+		session.settings.set("compaction.strategy", "snapcompact");
+		const entries = sessionManager.getBranch();
+		const lastEntryId = entries[entries.length - 1]?.id;
+		if (!lastEntryId) throw new Error("Expected a seeded entry id");
+		const fixedPreparation: compactionModule.CompactionPreparation = {
+			firstKeptEntryId: lastEntryId,
+			messagesToSummarize: [
+				{ role: "user", content: [{ type: "text", text: "中文内容".repeat(100) }], timestamp: 1 },
+			],
+			turnPrefixMessages: [],
+			recentMessages: [],
+			isSplitTurn: false,
+			tokensBefore: 100,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { ...compactionModule.DEFAULT_COMPACTION_SETTINGS, strategy: "snapcompact" },
+		};
+		vi.spyOn(compactionModule, "prepareCompaction").mockReturnValue(fixedPreparation);
+		const compactSpy = vi.spyOn(compactionModule, "compact").mockResolvedValue({
+			summary: "compacted",
+			shortSummary: undefined,
+			firstKeptEntryId: lastEntryId,
+			tokensBefore: 100,
+			details: {},
+		});
+
+		await session.runIdleCompaction();
+
+		const endEvent = events.find(
+			(event): event is Extract<AgentSessionEvent, { type: "auto_compaction_end" }> =>
+				event.type === "auto_compaction_end",
+		);
+		expect(compactSpy).toHaveBeenCalled();
+		// The start event fires before the in-try preflight downgrades action, so it
+		// still reports "snapcompact"; the end event reflects the downgraded action.
+		expect(events).toContainEqual({ type: "auto_compaction_start", reason: "idle", action: "snapcompact" });
+		expect(endEvent).toMatchObject({
+			type: "auto_compaction_end",
+			action: "context-full",
+		});
+		expect(endEvent?.errorMessage).toBeUndefined();
+		const downgradeNotice = events.find(
+			(event): event is Extract<AgentSessionEvent, { type: "notice" }> =>
+				event.type === "notice" &&
+				event.source === "compaction" &&
+				event.message.startsWith("snapcompact disabled: high non-ASCII rate detected"),
+		);
+		expect(downgradeNotice?.message).toContain("using context-full auto-compaction instead.");
+	});
+
 	it("strips hook-supplied snapcompact data when persisting context-full compaction", async () => {
 		const localTempDir = TempDir.createSync("@pi-context-full-preserve-data-");
 		const localSessionManager = SessionManager.inMemory(localTempDir.path());
@@ -1032,7 +1108,10 @@ describe("AgentSession handoff", () => {
 			`<handoff-context>\n${handoffText}\n</handoff-context>\n\nThe above is a handoff document from a previous session. Use this context to continue the work seamlessly.`,
 		);
 		expect(handoffSessionFile).not.toBe(previousSessionFile);
-		expect(handoffEntries[0]).toMatchObject({ type: "session", parentSession: previousSessionFile });
+		expect(handoffEntries.find(entry => entry.type === "session")).toMatchObject({
+			type: "session",
+			parentSession: previousSessionFile,
+		});
 		expect(
 			handoffEntries.some(
 				entry => entry.type === "custom_message" && entry.customType === "handoff" && entry.display,
